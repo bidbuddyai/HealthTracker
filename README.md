@@ -1,127 +1,232 @@
-# Adams & Grand Demolition - Weekly Progress Meetings
+# ScheduleSam - AI-Powered CPM Scheduling Platform
 
-A production-ready web application for managing weekly construction progress meetings with AI-powered assistance via Poe's OpenAI-compatible API.
+A sophisticated Critical Path Method (CPM) scheduling application comparable to industry standards like MS Project and Primavera P6. ScheduleSam combines advanced project scheduling capabilities with cutting-edge AI-powered schedule generation and optimization.
 
-## Features
+## 🚀 Key Features
 
-- **Project Management**: Create and manage multiple construction projects
-- **Meeting Management**: Sequential meeting creation with automatic agenda seeding
-- **9-Topic Agenda Structure**: Standardized agenda with discussion and decision tracking
-- **Attendance Tracking**: Digital attendance with presence indicators
-- **Action Items**: Comprehensive action item management with status tracking
-- **RFI Management**: Request for Information tracking with status and impact analysis
-- **Submittal Tracking**: Construction submittal management and review status
-- **Fabrication Monitoring**: Component fabrication timeline and risk tracking
-- **Open Items Log**: Project-level issue tracking and resolution
-- **Distribution Lists**: Meeting minutes distribution with delivery confirmation
-- **AI Assistant**: Poe-powered AI for meeting assistance, summarization, and automation
-- **Export Capabilities**: Meeting export in multiple formats (JSON, with DOCX/PDF planned)
-- **Carry-Forward Logic**: Automatic action item inheritance between meetings
-- **Real-time Updates**: Live collaboration features for meeting participants
+### **AI-Powered Schedule Generation**
+- **Intelligent Schedule Creation**: AI analyzes project descriptions and documents to generate comprehensive CPM schedules
+- **Multiple AI Models**: Support for GPT-5, GPT-5-Thinking, Claude Sonnet 4, Gemini 2.5 Pro, and more via Poe API
+- **Document Analysis**: Upload bid documents, specifications, and drawings for automatic scope extraction
+- **Interactive Refinement**: Continuous AI chat for schedule optimization and modifications
+- **Preview & Edit**: Quick inline editing of AI-generated schedules before final approval
 
-## Tech Stack
+### **Advanced CPM Scheduling Engine**
+- **Complete CPM Calculations**: Forward/backward pass, float calculations, and critical path identification
+- **Advanced Activity Types**: Milestones (zero duration), Level of Effort, Hammock activities, and WBS Summary rollups
+- **Relationship Management**: Full support for FS, SS, FF, SF relationships with lag/lead times
+- **Constraint Handling**: SNET, SNLT, FNET, FNLT, MSO, MFO constraints with violation detection
+- **Progress Tracking**: Percent complete, actual dates, and remaining duration updates
 
-### Frontend
-- **React 18** with TypeScript
-- **Tailwind CSS** for styling with Adams & Grand brand colors
-- **Shadcn/UI** component library
-- **React Hook Form** with Zod validation
-- **TanStack Query** for data fetching and state management
-- **Wouter** for client-side routing
+### **Work Breakdown Structure (WBS)**
+- **Hierarchical Organization**: Complete WBS with parent/child relationships
+- **Visual Management**: Indenting/outdenting and hierarchical display
+- **Activity Codes & Custom Fields**: Advanced filtering and grouping system
+- **Project Organization**: Custom activity codes for comprehensive project categorization
 
-### Backend
-- **Express.js** server with TypeScript
-- **In-memory storage** for MVP (MemStorage implementation)
-- **Zod** for request validation
-- **RESTful API** design
+### **Visual Schedule Management**
+- **Interactive Gantt Charts**: Enhanced visualization with relationship arrows and critical path highlighting
+- **Schedule Grid**: Comprehensive activity grid with filtering, search, and column visibility controls
+- **Baseline Management**: Multiple named baselines with variance tracking and color-coded schedule slippage
+- **Real-time Updates**: Live collaboration with instant UI updates
 
-### AI Integration
-- **Poe OpenAI-compatible API** for LLM functionality
-- **Custom tool calling system** (app-level implementation)
-- **JSON-based function contracts** for AI actions
-- **Streaming responses** support
+### **Collaboration & Audit Trail**
+- **Enterprise Authentication**: Replit OpenID Connect with PostgreSQL session management
+- **Role-based Access Control**: Owner, Scheduler, Manager, Viewer, and Contributor roles
+- **Threaded Comments**: Activity-level discussions and collaboration
+- **File Attachments**: Document management via object storage
+- **Complete Audit Trail**: Change tracking with timestamps and user attribution
+- **Version History**: Schedule versioning with auto-save and restoration capabilities
 
-## Quick Start
+## 🛠 Tech Stack
+
+### **Frontend Architecture**
+- **React 18** with TypeScript for type safety and modern development
+- **Tailwind CSS** with custom brand theme and Shadcn/UI component library
+- **TanStack Query** for server state management and caching
+- **React Hook Form** with Zod validation for form handling
+- **Wouter** for lightweight client-side routing
+- **Vite** for fast development and optimized builds
+
+### **Backend Architecture**
+- **Node.js** with Express.js server using TypeScript
+- **PostgreSQL** database with Drizzle ORM for type-safe queries
+- **RESTful API** with comprehensive Zod schema validation
+- **Enterprise Authentication** via Replit OpenID Connect
+- **Object Storage Integration** for file attachments and document management
+
+### **AI Integration**
+- **Poe OpenAI-Compatible API** (https://api.poe.com/v1)
+- **Multiple Model Support**: GPT-5, GPT-5-Thinking, Claude, Gemini, and more
+- **Custom Function Calling**: App-level implementation with structured JSON schemas
+- **Streaming Responses** for real-time AI interactions
+- **Document Processing**: AI-powered extraction from uploaded project files
+
+## 🚀 Quick Start
 
 ### Prerequisites
-- Node.js 18+ 
-- npm or pnpm
-- Poe API key (get from https://poe.com/api_key)
+- Node.js 18+
+- PostgreSQL database
+- Poe API key ([Get yours here](https://poe.com/api_key))
 
 ### Setup
 
-1. **Clone and install dependencies**
+1. **Clone and Install**
    ```bash
    git clone <repository-url>
-   cd adams-grand-meetings
+   cd schedulesam
    npm install
    ```
 
-2. **Environment configuration**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
-
-3. **Required environment variables**
+2. **Environment Configuration**
    ```env
    POE_API_KEY=your_poe_api_key_here
+   DATABASE_URL=postgresql://username:password@localhost:5432/schedulesam
    SESSION_SECRET=your_random_session_secret
-   PORT=5000
    NODE_ENV=development
+   PORT=5000
    ```
 
-4. **Start development server**
+3. **Database Setup**
+   ```bash
+   npm run db:push
+   ```
+
+4. **Start Development Server**
    ```bash
    npm run dev
    ```
 
-5. **Access the application**
+5. **Access Application**
    - Open http://localhost:5000
-   - The app includes sample project data for testing
+   - Complete Replit Auth setup for user authentication
 
-## API Reference
+## 📊 Core Workflows
 
-### Projects
-- `GET /api/projects` - List all projects
-- `POST /api/projects` - Create new project
-- `GET /api/projects/:id` - Get project details
+### **AI Schedule Generation**
+1. **Create Project** → Auto-navigate to project page
+2. **Open AI Modal** → Access AI assistant 
+3. **Generate Schedule** → Describe project or upload documents
+4. **Preview & Edit** → Quick inline edits and activity additions
+5. **Save to Project** → Commit final schedule with CPM calculations
+6. **Continuous Refinement** → Use mini chat for ongoing optimizations
 
-### Meetings
-- `GET /api/projects/:id/meetings` - List project meetings
-- `POST /api/projects/:id/meetings?carryForward=true` - Create meeting with action item carry-forward
-- `GET /api/projects/:projectId/meetings/:seq` - Get specific meeting
+### **Traditional CPM Workflow**
+1. **WBS Creation** → Define work breakdown structure
+2. **Activity Definition** → Add tasks with durations and constraints
+3. **Relationship Building** → Link activities with dependencies
+4. **Schedule Calculation** → Run CPM analysis for critical path
+5. **Baseline Management** → Save baselines and track progress
+6. **Progress Updates** → Update actual dates and percent complete
 
-### Meeting Data
-- `GET /api/meetings/:id/attendance` - Get meeting attendance
-- `POST /api/meetings/:id/attendance` - Add attendee
-- `GET /api/meetings/:id/agenda` - Get agenda items
-- `PUT /api/agenda/:id` - Update agenda item
-- `GET /api/meetings/:id/actions` - Get action items
-- `POST /api/meetings/:id/actions` - Create action item
-- `GET /api/meetings/:id/rfis` - Get RFIs
-- `POST /api/meetings/:id/rfis` - Create RFI
-- `GET /api/meetings/:id/submittals` - Get submittals
-- `POST /api/meetings/:id/submittals` - Create submittal
-- `GET /api/meetings/:id/fabrication` - Get fabrication items
-- `POST /api/meetings/:id/fabrication` - Create fabrication item
-- `GET /api/meetings/:id/distribution` - Get distribution list
-- `POST /api/meetings/:id/distribution` - Add recipient
+## 🎯 Advanced Features
 
-### AI & Export
-- `POST /api/ai/chat` - AI assistant chat endpoint
-- `GET /api/meetings/:id/export?format=json` - Export meeting data
-- `POST /api/meetings/:id/distribute` - Distribute meeting minutes
+### **Activity Types**
+- **Tasks**: Standard work activities with duration
+- **Milestones**: Zero-duration project markers
+- **Level of Effort**: Ongoing activities spanning other work
+- **Hammock Activities**: Summary activities spanning multiple tasks
+- **WBS Summary**: Automatically calculated parent rollups
 
-## AI Assistant Usage
+### **Relationship Types**
+- **Finish-to-Start (FS)**: Traditional sequence dependencies
+- **Start-to-Start (SS)**: Parallel work coordination
+- **Finish-to-Finish (FF)**: Coordinated completion
+- **Start-to-Finish (SF)**: Just-in-time sequencing
+- **Lag/Lead Times**: Positive or negative time offsets
 
-The AI assistant supports several tool-based actions:
+### **Constraint Management**
+- **Start No Earlier Than (SNET)**
+- **Start No Later Than (SNLT)**
+- **Finish No Earlier Than (FNET)**
+- **Finish No Later Than (FNLT)**
+- **Must Start On (MSO)**
+- **Must Finish On (MFO)**
 
-### Available Tools
-- **insertActionItems**: Create action items from discussion
-- **createRFI**: Generate RFIs from meeting content
-- **updateAgendaDiscussion**: Update agenda topics
-- **distributeMinutes**: Send meeting minutes to recipients
-- **summarizeMeeting**: Generate meeting summaries
+## 🔧 API Reference
 
-### Example Queries
+### **Projects**
+```http
+GET    /api/projects                    # List all projects
+POST   /api/projects                    # Create project
+GET    /api/projects/:id                # Get project details
+PUT    /api/projects/:id                # Update project
+DELETE /api/projects/:id                # Delete project
+```
+
+### **Activities & Scheduling**
+```http
+GET    /api/projects/:id/activities     # Get project activities
+POST   /api/projects/:id/activities     # Create activity
+PUT    /api/activities/:id              # Update activity
+DELETE /api/activities/:id              # Delete activity
+GET    /api/projects/:id/relationships  # Get activity relationships
+POST   /api/projects/:id/calculate-cpm  # Run CPM calculations
+```
+
+### **AI Integration**
+```http
+POST   /api/ai/generate-schedule        # AI schedule generation
+POST   /api/ai/chat                     # Interactive AI chat
+POST   /api/ai/analyze-documents        # Document analysis
+GET    /api/ai/models                   # Available AI models
+```
+
+### **Collaboration**
+```http
+GET    /api/activities/:id/comments     # Get activity comments
+POST   /api/activities/:id/comments     # Add comment
+GET    /api/projects/:id/members        # Get project members
+POST   /api/projects/:id/members        # Add member
+```
+
+## 📈 Data Management
+
+### **Database Schema**
+- **Projects**: Project metadata and settings
+- **Activities**: CPM activities with all scheduling data
+- **Relationships**: Activity dependencies and constraints
+- **WBS**: Work breakdown structure hierarchy
+- **Baselines**: Snapshot schedules for variance analysis
+- **Comments**: Collaboration and communication threads
+- **Audit Logs**: Complete change tracking and version history
+
+### **File Storage**
+- **Object Storage Integration**: Secure file uploads and management
+- **Document Processing**: AI analysis of uploaded project documents
+- **Version Control**: File versioning and access control
+- **Public/Private Assets**: Granular permission management
+
+## 🔐 Security & Authentication
+
+### **Enterprise Authentication**
+- **Replit OpenID Connect**: Seamless single sign-on integration
+- **PostgreSQL Sessions**: Secure session management and storage
+- **Automatic Token Refresh**: Transparent authentication handling
+- **User Profile Management**: Complete user information and preferences
+
+### **Access Control**
+- **Role-based Permissions**: Fine-grained access control system
+- **Project-level Security**: Per-project member management
+- **API Authentication**: Secure endpoint protection
+- **Session Security**: Encrypted session storage and handling
+
+## 🚀 Deployment
+
+ScheduleSam is designed for seamless deployment on Replit with:
+- **Automatic Database Provisioning**: PostgreSQL setup included
+- **Environment Management**: Secure secrets handling
+- **Scalable Architecture**: Ready for production workloads
+- **Domain Integration**: Custom domain support available
+
+## 🤝 Contributing
+
+This project follows modern development practices:
+- **TypeScript**: Full type safety across frontend and backend
+- **Code Quality**: ESLint and Prettier for consistent code style
+- **Database Migrations**: Safe schema evolution with Drizzle Kit
+- **Testing**: Comprehensive test coverage (planned)
+
+---
+
+**Built with ❤️ for construction professionals who demand enterprise-grade project scheduling with the power of AI.**
