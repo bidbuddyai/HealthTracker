@@ -575,8 +575,9 @@ function reconstructFromPatterns(content: string): any {
  * Process and transform the parsed result into the expected frontend format
  */
 function processScheduleResult(result: any, request: ScheduleAIRequest): ScheduleAIResponse {
-  // Transform AI activities to the format expected by frontend
-  const activities = (result.activities || []).map((activity: any, index: number) => {
+  try {
+    // Transform AI activities to the format expected by frontend
+    const activities = (result.activities || []).map((activity: any, index: number) => {
       // Calculate dates properly
       const duration = Number(activity.originalDuration || activity.duration) || 5;
       const startDateStr = activity.earlyStart || activity.startDate || request.startDate || new Date().toISOString().split('T')[0];
