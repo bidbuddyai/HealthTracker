@@ -117,58 +117,10 @@ export async function generateScheduleWithAI(request: ScheduleAIRequest): Promis
         console.log(`Processing uploaded file: ${filePath}`);
         console.log(`File size: ${fileSize.toLocaleString()} characters`);
         
-        let processedContent = content;
-        
-        // Smart content handling based on file size
-        if (fileSize <= 150000) {
-          // For files under 150k chars, include everything
-          console.log(`Including full content (under 150k limit)`);
-          processedContent = content;
-        } else if (fileSize <= 300000) {
-          // For large files (150k-300k), include first 100k and last 50k with indicator
-          console.log(`Large file detected. Using smart chunking: first 100k + last 50k chars`);
-          const firstChunk = content.substring(0, 100000);
-          const lastChunk = content.substring(content.length - 50000);
-          processedContent = `${firstChunk}\n\n--- MIDDLE CONTENT TRUNCATED FOR SIZE (${(fileSize - 150000).toLocaleString()} chars omitted) ---\n...\n--- CONTINUING WITH END OF DOCUMENT ---\n\n${lastChunk}`;
-        } else {
-          // For very large files (>300k), extract key sections intelligently
-          console.log(`Very large file detected (${fileSize.toLocaleString()} chars). Extracting key sections.`);
-          
-          // Extract sections that typically contain important schedule information
-          const keywordSections = [
-            'scope of work', 'schedule', 'timeline', 'duration', 'milestone', 
-            'completion', 'contract time', 'substantial completion', 'phasing',
-            'sequence', 'critical path', 'working days', 'calendar days',
-            'notice to proceed', 'project description', 'general requirements'
-          ];
-          
-          // Get first 50k chars (usually contains project overview)
-          let extractedContent = content.substring(0, 50000) + "\n\n--- EXTRACTED KEY SECTIONS ---\n";
-          
-          // Extract paragraphs containing key scheduling terms
-          const paragraphs = content.split('\n');
-          const keyParagraphs: string[] = [];
-          
-          for (const paragraph of paragraphs) {
-            const lowerPara = paragraph.toLowerCase();
-            const hasKeyword = keywordSections.some(keyword => 
-              lowerPara.includes(keyword) && paragraph.trim().length > 50
-            );
-            
-            if (hasKeyword && keyParagraphs.length < 50) { // Limit to 50 key paragraphs
-              keyParagraphs.push(paragraph.trim());
-            }
-          }
-          
-          extractedContent += keyParagraphs.join('\n\n') + "\n\n--- END EXTRACTED SECTIONS ---\n";
-          
-          // Add last 30k chars (usually contains schedules, specifications)
-          extractedContent += "\n--- FINAL SECTIONS ---\n" + content.substring(content.length - 30000);
-          
-          processedContent = extractedContent;
-          
-          console.log(`Extracted content reduced to ${processedContent.length.toLocaleString()} characters`);
-        }
+        // Process complete file content without any character limits
+        // Trust the AI model to handle large contexts effectively
+        console.log(`Processing complete file content (unlimited analysis enabled)`);
+        const processedContent = content;
         
         fileContents.push(`\n--- Content from uploaded file ${filePath} (${fileSize.toLocaleString()} chars) ---\n${processedContent}\n--- End of file ---\n`);
         
