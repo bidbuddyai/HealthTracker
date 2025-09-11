@@ -115,8 +115,8 @@ export async function generateScheduleWithAI(request: ScheduleAIRequest): Promis
         fileContents.push(`\n--- Content from uploaded file ${filePath} ---\n${content.substring(0, 5000)}\n--- End of file ---\n`);
       } catch (error) {
         console.error(`Failed to read file ${filePath}:`, error);
-        // Add a note about the missing file instead of failing silently
-        fileContents.push(`\n--- File ${filePath} could not be read (file not found or access error) ---\n`);
+        // Add detailed error info for AI context
+        fileContents.push(`\n--- IMPORTANT: File ${filePath} could not be read ---\nError: ${error instanceof Error ? error.message : 'Unknown error'}\nNote: AI should generate schedule based on user requirements without this document context.\n--- End of file error ---\n`);
       }
     }
     
@@ -130,19 +130,42 @@ export async function generateScheduleWithAI(request: ScheduleAIRequest): Promis
   switch (request.type) {
     case 'create':
       prompt = `Create a CPM schedule for this project:
-${request.projectDescription}${uploadedContent}
+${request.projectDescription}
+
+**USER SPECIFIC REQUIREMENTS:**
+${request.userRequest}
+${uploadedContent}
 
 Start Date: ${request.startDate || 'Today'}
 ${request.constraints ? `Constraints: ${request.constraints.join(', ')}` : ''}
 
-**CRITICAL REQUIREMENTS:**
-1. If contract duration is mentioned, the TOTAL SCHEDULE MUST NOT EXCEED IT
-2. If no duration is specified, estimate based on project complexity (30-180 days typical)
-3. Individual activity durations should be 1-20 days (most 3-10 days)
-4. Use parallel work paths to compress schedule if needed
-5. VERIFY TOTAL DURATION by calculating critical path
+**HARD REQUIREMENTS - MUST FOLLOW EXACTLY:**
+1. **CONSTRUCTION SEQUENCE** (if applicable based on user request/documents):
+   - Notice to Proceed: 1 working day
+   - Submittals: 5 working days (with Friday approval pattern)
+   - Temp Fencing installation
+   - Abatement Setup
+   - Abatement Work (by types: asbestos, lead, etc.)
+   - Abatement Clearances
+   - BMP (Best Management Practices) Setup
+   - Demolition Above Ground
+   - Demolition Below Ground
+   - Soil Stabilizer application
+   - Remove BMPs
+   - Remove Fence
 
-**PRIMARY OBJECTIVE:** Generate a complete CPM schedule that FITS WITHIN A REASONABLE CONTRACT DURATION.
+2. **DURATION CONSTRAINTS:**
+   - If specific working days mentioned (e.g., 45 working days), STRICTLY adhere to it
+   - If contract duration is in documents, TOTAL SCHEDULE MUST NOT EXCEED IT
+   - Individual activity durations should be 1-20 days (most 3-10 days)
+   - Use parallel work paths to compress schedule if needed
+
+3. **DOCUMENT ANALYSIS PRIORITY:**
+   - Extract EXACT scope from uploaded documents
+   - Follow document-specified sequences and constraints
+   - Use document quantities for duration calculations
+
+**PRIMARY OBJECTIVE:** Generate a complete CPM schedule that MATCHES USER REQUIREMENTS and FITS WITHIN SPECIFIED CONTRACT DURATION.
 
 Analyze the uploaded documents to find:
 1. **Contract duration** (look for "substantial completion", "contract time", "calendar days", "working days")
@@ -151,7 +174,7 @@ Analyze the uploaded documents to find:
 4. **Site constraints** and phasing requirements
 
 Generate a schedule with:
-1. **50-150+ activities** based on project complexity from documents
+1. **50-150+ activities** based on project complexity (adjust based on user requirements and document scope)
 2. **Realistic durations** that collectively fit within contract time:
    - If contract is 365 days, critical path must be ≤365 days
    - Use parallel paths to compress schedule if needed
@@ -220,7 +243,7 @@ Provide:
   }
   
   try {
-    const aiModel = request.model || 'Claude-3-Haiku';
+    const aiModel = request.model || 'Claude-Sonnet-4';
     console.log(`Sending request to AI model ${aiModel}...`);
     console.log('POE_API_KEY exists:', !!process.env.POE_API_KEY);
     console.log('API Key first 10 chars:', process.env.POE_API_KEY?.substring(0, 10));
@@ -236,7 +259,9 @@ Provide:
         messages: [
           { role: "system", content: SCHEDULE_SYSTEM_PROMPT },
           { role: "user", content: prompt }
-        ]
+        ],
+        temperature: 0.2,
+        max_tokens: 8000
       });
       
       // Set 90 second timeout for complex schedule generation
