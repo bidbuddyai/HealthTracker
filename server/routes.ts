@@ -1069,10 +1069,24 @@ Return ONLY the enhanced prompt text, nothing else.`;
               createdActivity = await storage.createActivity(dbActivity);
             } else {
               // Memory storage expects activity with projectId and name
+              // Convert number dates to strings for database storage
+              const convertDateField = (field: any): string | null => {
+                if (typeof field === 'number') {
+                  const date = new Date();
+                  date.setDate(date.getDate() + field);
+                  return date.toISOString().split('T')[0];
+                }
+                return field || null;
+              };
+              
               createdActivity = await storage.createActivity({
                 ...activity, 
                 projectId,
                 name: activity.activityName || "Unnamed Activity",
+                earlyStart: convertDateField(activity.earlyStart),
+                earlyFinish: convertDateField(activity.earlyFinish),
+                lateStart: convertDateField(activity.lateStart),
+                lateFinish: convertDateField(activity.lateFinish),
                 status: activity.status === "Not Started" ? "NotStarted" :
                        activity.status === "In Progress" ? "InProgress" :
                        activity.status === "Completed" ? "Completed" : "NotStarted"
