@@ -373,9 +373,9 @@ Provide:
     }
     
     console.log('AI response received successfully');
-    console.log("Response choices count:", response.choices?.length);
+    console.log("Response choices count:", (response as any).choices?.length);
     
-    let content = response.choices[0].message.content || "{}";
+    let content = (response as any).choices[0].message.content || "{}";
     console.log("Content length:", content?.length);
     console.log("Content preview:", content?.substring(0, 200));
     
@@ -431,7 +431,12 @@ Provide:
         successors: Array.isArray(activity.successors) ? activity.successors : [],
         
         // Status fields
-        status: activity.status || 'NotStarted',
+        status: activity.status === 'Not Started' ? 'Not Started' :
+               activity.status === 'In Progress' ? 'In Progress' :
+               activity.status === 'Completed' ? 'Completed' :
+               activity.status === 'NotStarted' ? 'Not Started' :
+               activity.status === 'InProgress' ? 'In Progress' :
+               'Not Started',
         percentComplete: Number(activity.percentComplete) || 0,
         
         // CPM fields
