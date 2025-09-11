@@ -20,39 +20,257 @@ interface InteractiveScheduleCreatorProps {
   onScheduleCreated?: (scheduleId: string) => void;
 }
 
-// Available models from Poe's OpenAI-compatible API
-const POE_MODELS = [
-  // GPT Models
-  { value: "GPT-5", label: "GPT-5 (Latest)", category: "GPT" },
-  { value: "GPT-5-mini", label: "GPT-5 Mini", category: "GPT" },
-  { value: "GPT-4o", label: "GPT-4o (High Quality)", category: "GPT" },
-  { value: "GPT-4.1", label: "GPT-4.1", category: "GPT" },
-  { value: "GPT-3.5-Turbo", label: "GPT-3.5-Turbo (Cheap)", category: "GPT" },
-  
-  // Claude Models
-  { value: "Claude-Opus-4.1", label: "Claude Opus 4.1", category: "Claude" },
-  { value: "Claude-Sonnet-4", label: "Claude Sonnet 4 (Best Quality)", category: "Claude" },
-  { value: "Claude-3.5-Sonnet", label: "Claude 3.5 Sonnet", category: "Claude" },
-  { value: "Claude-3-Haiku", label: "Claude-3-Haiku (Fast & Cheap)", category: "Claude" },
-  
-  // Google Models
-  { value: "Gemini-2.5-Pro", label: "Gemini 2.5 Pro (1M context)", category: "Google" },
-  { value: "Gemini-2.0-Flash", label: "Gemini 2.0 Flash", category: "Google" },
-  
-  // Reasoning Models
-  { value: "o3-pro", label: "o3 Pro (Advanced Reasoning)", category: "Reasoning" },
-  { value: "DeepSeek-R1-T", label: "DeepSeek R1-T (Reasoning)", category: "Reasoning" },
-  { value: "DeepSeek-V3-FW", label: "DeepSeek V3-FW", category: "Reasoning" },
-  { value: "Llama-4-Scout-T", label: "Llama 4 Scout-T (Reasoning)", category: "Reasoning" },
-  
+// Comprehensive list of latest Poe API models (2025)
+interface ModelInfo {
+  value: string;
+  label: string;
+  category: string;
+  description: string;
+  contextLength: string;
+  speed: 'Fast' | 'Medium' | 'Slow';
+  quality: 'Good' | 'High' | 'Excellent';
+  cost: 'Low' | 'Medium' | 'High';
+  recommended?: boolean;
+}
+
+const POE_MODELS: ModelInfo[] = [
+  // Latest GPT Models (OpenAI)
+  { 
+    value: "GPT-5", 
+    label: "GPT-5 (Latest Flagship)", 
+    category: "GPT", 
+    description: "OpenAI's newest flagship model with enhanced reasoning and coding capabilities",
+    contextLength: "128K",
+    speed: "Medium",
+    quality: "Excellent",
+    cost: "High",
+    recommended: true
+  },
+  { 
+    value: "ChatGPT-5", 
+    label: "ChatGPT-5 (GPT-5 Snapshot)", 
+    category: "GPT", 
+    description: "GPT-5 version optimized for conversational AI with latest training",
+    contextLength: "128K",
+    speed: "Medium",
+    quality: "Excellent",
+    cost: "High"
+  },
+  { 
+    value: "GPT-5-mini", 
+    label: "GPT-5 Mini (Fast & Smart)", 
+    category: "GPT", 
+    description: "Smaller, faster GPT-5 variant matching GPT-4.1 performance at lower cost",
+    contextLength: "128K",
+    speed: "Fast",
+    quality: "High",
+    cost: "Medium",
+    recommended: true
+  },
+  { 
+    value: "GPT-4.1", 
+    label: "GPT-4.1 (Improved Coding)", 
+    category: "GPT", 
+    description: "Enhanced GPT-4 with improved coding capabilities and 400K context window",
+    contextLength: "400K",
+    speed: "Medium",
+    quality: "High",
+    cost: "Medium"
+  },
+  { 
+    value: "GPT-4o", 
+    label: "GPT-4o (Vision Enabled)", 
+    category: "GPT", 
+    description: "Multimodal model with vision capabilities and strong reasoning",
+    contextLength: "128K",
+    speed: "Medium",
+    quality: "High",
+    cost: "Medium"
+  },
+  { 
+    value: "GPT-4o-mini", 
+    label: "GPT-4o Mini (Budget Option)", 
+    category: "GPT", 
+    description: "Smaller version of GPT-4o, cost-effective for simple tasks",
+    contextLength: "128K",
+    speed: "Fast",
+    quality: "Good",
+    cost: "Low"
+  },
+
+  // Advanced Reasoning Models
+  { 
+    value: "o3-pro", 
+    label: "o3 Pro (Advanced Reasoning)", 
+    category: "Reasoning", 
+    description: "OpenAI's latest reasoning model for complex problem-solving",
+    contextLength: "200K",
+    speed: "Slow",
+    quality: "Excellent",
+    cost: "High",
+    recommended: true
+  },
+  { 
+    value: "o4-mini-deep", 
+    label: "o4 Mini Deep (Latest Reasoning)", 
+    category: "Reasoning", 
+    description: "Latest reasoning variant with enhanced deep thinking capabilities",
+    contextLength: "200K",
+    speed: "Medium",
+    quality: "Excellent",
+    cost: "High"
+  },
+
+  // Claude Models (Anthropic)
+  { 
+    value: "Claude-Opus-4.1", 
+    label: "Claude Opus 4.1 (Latest Flagship)", 
+    category: "Claude", 
+    description: "Anthropic's most powerful model with 200K context and exceptional reasoning",
+    contextLength: "200K",
+    speed: "Slow",
+    quality: "Excellent",
+    cost: "High",
+    recommended: true
+  },
+  { 
+    value: "Claude-Sonnet-4", 
+    label: "Claude Sonnet 4 (Best Balance)", 
+    category: "Claude", 
+    description: "High-performance model balancing quality and speed for professional work",
+    contextLength: "200K",
+    speed: "Medium",
+    quality: "Excellent",
+    cost: "Medium",
+    recommended: true
+  },
+  { 
+    value: "Claude-3.7-Sonnet", 
+    label: "Claude 3.7 Sonnet (Hybrid Reasoning)", 
+    category: "Claude", 
+    description: "Feb 2025 hybrid model combining reasoning with fast response times",
+    contextLength: "200K",
+    speed: "Medium",
+    quality: "High",
+    cost: "Medium"
+  },
+  { 
+    value: "Claude-3.5-Sonnet", 
+    label: "Claude 3.5 Sonnet (Proven)", 
+    category: "Claude", 
+    description: "Reliable previous generation model with strong coding capabilities",
+    contextLength: "200K",
+    speed: "Medium",
+    quality: "High",
+    cost: "Medium"
+  },
+
+  // Google Gemini Models
+  { 
+    value: "Gemini-2.5-Pro", 
+    label: "Gemini 2.5 Pro (1M Context + Web)", 
+    category: "Gemini", 
+    description: "Google's flagship with massive 1M token context and web search integration",
+    contextLength: "1M",
+    speed: "Medium",
+    quality: "Excellent",
+    cost: "High",
+    recommended: true
+  },
+  { 
+    value: "Gemini-2.5-Flash", 
+    label: "Gemini 2.5 Flash (Fast Pro)", 
+    category: "Gemini", 
+    description: "Faster variant of 2.5 Pro with reduced latency",
+    contextLength: "1M",
+    speed: "Fast",
+    quality: "High",
+    cost: "Medium"
+  },
+  { 
+    value: "Gemini-2.0-Flash", 
+    label: "Gemini 2.0 Flash", 
+    category: "Gemini", 
+    description: "Latest 2.0 generation with improved performance",
+    contextLength: "1M",
+    speed: "Fast",
+    quality: "High",
+    cost: "Medium"
+  },
+
   // Other Leading Models
-  { value: "Grok-4", label: "Grok 4 (xAI)", category: "Other" },
-  { value: "GLM-4.5", label: "GLM 4.5", category: "Other" },
-  { value: "Kimi-K2", label: "Kimi K2", category: "Other" },
-  { value: "Qwen-3-235B-T", label: "Qwen 3 235B-T", category: "Other" },
-  { value: "Mistral-Small-3", label: "Mistral Small 3", category: "Other" },
-  { value: "Llama-4-Maverick", label: "Llama 4 Maverick", category: "Other" },
-  { value: "Llama-3.1-405B", label: "Llama-3.1-405B (Good & Free)", category: "Other" },
+  { 
+    value: "Grok-4", 
+    label: "Grok 4 (xAI Latest)", 
+    category: "Other", 
+    description: "xAI's latest reasoning model with real-time information access",
+    contextLength: "128K",
+    speed: "Medium",
+    quality: "High",
+    cost: "Medium"
+  },
+  { 
+    value: "DeepSeek-R1", 
+    label: "DeepSeek R1 (Open Reasoning)", 
+    category: "Other", 
+    description: "Open-source reasoning model with strong mathematical capabilities",
+    contextLength: "128K",
+    speed: "Medium",
+    quality: "High",
+    cost: "Low",
+    recommended: true
+  },
+  { 
+    value: "DeepSeek-V3-FW", 
+    label: "DeepSeek V3-FW", 
+    category: "Other", 
+    description: "Latest DeepSeek variant with enhanced capabilities",
+    contextLength: "128K",
+    speed: "Medium",
+    quality: "High",
+    cost: "Low"
+  },
+  { 
+    value: "Llama-4-Maverick", 
+    label: "Llama 4 Maverick (Meta Latest)", 
+    category: "Other", 
+    description: "Meta's newest flagship model with advanced reasoning",
+    contextLength: "128K",
+    speed: "Medium",
+    quality: "High",
+    cost: "Low"
+  },
+  { 
+    value: "Llama-3.1-405B", 
+    label: "Llama 3.1 405B (Free & Powerful)", 
+    category: "Other", 
+    description: "Large open-source model, excellent for complex tasks at no cost",
+    contextLength: "128K",
+    speed: "Slow",
+    quality: "High",
+    cost: "Low",
+    recommended: true
+  },
+  { 
+    value: "Qwen-3-235B-T", 
+    label: "Qwen 3 235B-T (Alibaba)", 
+    category: "Other", 
+    description: "Alibaba's flagship model with strong multilingual capabilities",
+    contextLength: "128K",
+    speed: "Medium",
+    quality: "High",
+    cost: "Low"
+  },
+  { 
+    value: "Kimi-K2", 
+    label: "Kimi K2 (Large Context)", 
+    category: "Other", 
+    description: "Specialized model with very large context window for document analysis",
+    contextLength: "2M",
+    speed: "Medium",
+    quality: "High",
+    cost: "Medium"
+  }
 ];
 
 export default function InteractiveScheduleCreator({ projectId, onScheduleCreated }: InteractiveScheduleCreatorProps) {
@@ -67,7 +285,21 @@ export default function InteractiveScheduleCreator({ projectId, onScheduleCreate
   );
   const [uploadedFiles, setUploadedFiles] = useState<string[]>([]);
   const [uploadedFileNames, setUploadedFileNames] = useState<string[]>([]);
-  const [selectedModel, setSelectedModel] = useState("Claude-Sonnet-4");
+  // Load model preference from localStorage or default to Claude-Sonnet-4
+  const [selectedModel, setSelectedModel] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('schedulesam-preferred-model') || "Claude-Sonnet-4";
+    }
+    return "Claude-Sonnet-4";
+  });
+
+  // Save model selection to localStorage
+  const handleModelChange = (value: string) => {
+    setSelectedModel(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('schedulesam-preferred-model', value);
+    }
+  };
   const [showSaveDialog, setShowSaveDialog] = useState(false);
   const [showLoadDialog, setShowLoadDialog] = useState(false);
   const [scheduleName, setScheduleName] = useState("");
@@ -110,7 +342,7 @@ export default function InteractiveScheduleCreator({ projectId, onScheduleCreate
   });
   
   // Query for existing schedules
-  const { data: schedules = [] } = useQuery({
+  const { data: schedules = [] } = useQuery<any[]>({
     queryKey: [`/api/projects/${projectId}/schedules`],
     enabled: showLoadDialog
   });
@@ -334,48 +566,158 @@ export default function InteractiveScheduleCreator({ projectId, onScheduleCreate
                 
                 <div>
                   <Label htmlFor="ai-model">AI Model</Label>
-                  <Select value={selectedModel} onValueChange={setSelectedModel}>
+                  <Select value={selectedModel} onValueChange={handleModelChange} data-testid="select-ai-model">
                     <SelectTrigger id="ai-model">
                       <SelectValue placeholder="Select AI model" />
                     </SelectTrigger>
                     <SelectContent className="max-h-[400px] overflow-y-auto">
+                      {/* Recommended Models */}
+                      <div className="font-semibold text-xs text-green-600 px-2 py-1 sticky top-0 bg-white border-b">⭐ Recommended Models</div>
+                      {POE_MODELS.filter(m => m.recommended).map(model => (
+                        <SelectItem key={model.value} value={model.value} className="relative">
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{model.label}</span>
+                              <div className="flex items-center gap-1">
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.speed === 'Fast' ? 'bg-green-100 text-green-700' :
+                                  model.speed === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.speed}</span>
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.cost === 'Low' ? 'bg-green-100 text-green-700' :
+                                  model.cost === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.cost} Cost</span>
+                              </div>
+                            </div>
+                            <span className="text-xs text-gray-500">{model.description}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                      
                       {/* GPT Models */}
-                      <div className="font-semibold text-xs text-gray-500 px-2 py-1 sticky top-0 bg-white">GPT Models</div>
-                      {POE_MODELS.filter(m => m.category === "GPT").map(model => (
+                      <div className="font-semibold text-xs text-gray-500 px-2 py-1 mt-2 sticky top-0 bg-white border-b">🤖 GPT Models (OpenAI)</div>
+                      {POE_MODELS.filter(m => m.category === "GPT" && !m.recommended).map(model => (
                         <SelectItem key={model.value} value={model.value}>
-                          {model.label}
-                        </SelectItem>
-                      ))}
-                      
-                      {/* Claude Models */}
-                      <div className="font-semibold text-xs text-gray-500 px-2 py-1 mt-2 sticky top-0 bg-white">Claude Models</div>
-                      {POE_MODELS.filter(m => m.category === "Claude").map(model => (
-                        <SelectItem key={model.value} value={model.value}>
-                          {model.label}
-                        </SelectItem>
-                      ))}
-                      
-                      {/* Google Models */}
-                      <div className="font-semibold text-xs text-gray-500 px-2 py-1 mt-2 sticky top-0 bg-white">Google Models</div>
-                      {POE_MODELS.filter(m => m.category === "Google").map(model => (
-                        <SelectItem key={model.value} value={model.value}>
-                          {model.label}
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{model.label}</span>
+                              <div className="flex items-center gap-1">
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.speed === 'Fast' ? 'bg-green-100 text-green-700' :
+                                  model.speed === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.speed}</span>
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.cost === 'Low' ? 'bg-green-100 text-green-700' :
+                                  model.cost === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.cost} Cost</span>
+                              </div>
+                            </div>
+                            <span className="text-xs text-gray-500">{model.description}</span>
+                          </div>
                         </SelectItem>
                       ))}
                       
                       {/* Reasoning Models */}
-                      <div className="font-semibold text-xs text-gray-500 px-2 py-1 mt-2 sticky top-0 bg-white">Reasoning Models</div>
-                      {POE_MODELS.filter(m => m.category === "Reasoning").map(model => (
+                      <div className="font-semibold text-xs text-gray-500 px-2 py-1 mt-2 sticky top-0 bg-white border-b">🧠 Advanced Reasoning Models</div>
+                      {POE_MODELS.filter(m => m.category === "Reasoning" && !m.recommended).map(model => (
                         <SelectItem key={model.value} value={model.value}>
-                          {model.label}
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{model.label}</span>
+                              <div className="flex items-center gap-1">
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.speed === 'Fast' ? 'bg-green-100 text-green-700' :
+                                  model.speed === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.speed}</span>
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.cost === 'Low' ? 'bg-green-100 text-green-700' :
+                                  model.cost === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.cost} Cost</span>
+                              </div>
+                            </div>
+                            <span className="text-xs text-gray-500">{model.description}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                      
+                      {/* Claude Models */}
+                      <div className="font-semibold text-xs text-gray-500 px-2 py-1 mt-2 sticky top-0 bg-white border-b">🎭 Claude Models (Anthropic)</div>
+                      {POE_MODELS.filter(m => m.category === "Claude" && !m.recommended).map(model => (
+                        <SelectItem key={model.value} value={model.value}>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{model.label}</span>
+                              <div className="flex items-center gap-1">
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.speed === 'Fast' ? 'bg-green-100 text-green-700' :
+                                  model.speed === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.speed}</span>
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.cost === 'Low' ? 'bg-green-100 text-green-700' :
+                                  model.cost === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.cost} Cost</span>
+                              </div>
+                            </div>
+                            <span className="text-xs text-gray-500">{model.description}</span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                      
+                      {/* Gemini Models */}
+                      <div className="font-semibold text-xs text-gray-500 px-2 py-1 mt-2 sticky top-0 bg-white border-b">💎 Gemini Models (Google)</div>
+                      {POE_MODELS.filter(m => m.category === "Gemini" && !m.recommended).map(model => (
+                        <SelectItem key={model.value} value={model.value}>
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{model.label}</span>
+                              <div className="flex items-center gap-1">
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.speed === 'Fast' ? 'bg-green-100 text-green-700' :
+                                  model.speed === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.speed}</span>
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.cost === 'Low' ? 'bg-green-100 text-green-700' :
+                                  model.cost === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.cost} Cost</span>
+                              </div>
+                            </div>
+                            <span className="text-xs text-gray-500">{model.description}</span>
+                          </div>
                         </SelectItem>
                       ))}
                       
                       {/* Other Models */}
-                      <div className="font-semibold text-xs text-gray-500 px-2 py-1 mt-2 sticky top-0 bg-white">Other Models</div>
-                      {POE_MODELS.filter(m => m.category === "Other").map(model => (
+                      <div className="font-semibold text-xs text-gray-500 px-2 py-1 mt-2 sticky top-0 bg-white border-b">🚀 Other Leading Models</div>
+                      {POE_MODELS.filter(m => m.category === "Other" && !m.recommended).map(model => (
                         <SelectItem key={model.value} value={model.value}>
-                          {model.label}
+                          <div className="flex flex-col gap-1">
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">{model.label}</span>
+                              <div className="flex items-center gap-1">
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.speed === 'Fast' ? 'bg-green-100 text-green-700' :
+                                  model.speed === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.speed}</span>
+                                <span className={`text-xs px-1.5 py-0.5 rounded ${
+                                  model.cost === 'Low' ? 'bg-green-100 text-green-700' :
+                                  model.cost === 'Medium' ? 'bg-yellow-100 text-yellow-700' :
+                                  'bg-red-100 text-red-700'
+                                }`}>{model.cost} Cost</span>
+                              </div>
+                            </div>
+                            <span className="text-xs text-gray-500">{model.description}</span>
+                          </div>
                         </SelectItem>
                       ))}
                     </SelectContent>
