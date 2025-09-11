@@ -280,6 +280,8 @@ export default function InteractiveScheduleCreator({ projectId, onScheduleCreate
   const [activities, setActivities] = useState<Activity[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generationProgress, setGenerationProgress] = useState("");
+  const [estimatedTimeRemaining, setEstimatedTimeRemaining] = useState<number | null>(null);
+  const [generationStartTime, setGenerationStartTime] = useState<number | null>(null);
   const [projectStartDate, setProjectStartDate] = useState(
     new Date().toISOString().split('T')[0]
   );
@@ -309,6 +311,9 @@ export default function InteractiveScheduleCreator({ projectId, onScheduleCreate
   // Generate schedule with AI
   const generateScheduleMutation = useMutation({
     mutationFn: async (type: 'create' | 'update' | 'lookahead') => {
+      setGenerationStartTime(Date.now());
+      setEstimatedTimeRemaining(uploadedFiles.length > 0 ? 120 : 60); // Estimate based on file complexity
+      
       const response = await apiRequest("POST", `/api/projects/${projectId}/schedules/generate-ai`, {
         type,
         projectDescription,
@@ -317,25 +322,47 @@ export default function InteractiveScheduleCreator({ projectId, onScheduleCreate
         startDate: projectStartDate,
         uploadedFiles,
         model: selectedModel
-      });
+      }, { timeout: 300000 }); // 5-minute timeout for AI generation
       return response.json();
     },
     onSuccess: (data) => {
+      setIsGenerating(false);
+      setGenerationProgress("");
+      setEstimatedTimeRemaining(null);
+      setGenerationStartTime(null);
+      
       if (data.activities && data.activities.length > 0) {
         setActivities(data.activities);
         toast({
-          title: "Schedule generated",
-          description: `Created ${data.activities.length} activities with CPM calculations.`,
+          title: "Schedule generated successfully! 🎉",
+          description: `Created ${data.activities.length} activities with CPM calculations using ${selectedModel}.`,
+        });
+      } else if (data.summary && data.summary.includes('Failed to parse')) {
+        // Handle parsing failure gracefully
+        toast({
+          title: "Partial generation with parsing issues",
+          description: data.summary,
+          variant: "destructive",
         });
       }
       if (data.schedule?.id) {
         onScheduleCreated?.(data.schedule.id);
       }
     },
-    onError: () => {
+    onError: (error) => {
+      setIsGenerating(false);
+      setGenerationProgress("");
+      setEstimatedTimeRemaining(null);
+      setGenerationStartTime(null);
+      
+      const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+      const isTimeout = errorMessage.includes('timeout');
+      
       toast({
-        title: "Generation failed",
-        description: "Failed to generate schedule. Please try again.",
+        title: isTimeout ? "Generation timeout" : "Generation failed",
+        description: isTimeout 
+          ? "The generation took too long (over 5 minutes). This may happen with very complex documents. Try using Claude-Sonnet-4 for better performance."
+          : `Failed to generate schedule: ${errorMessage}`,
         variant: "destructive",
       });
     },
@@ -421,6 +448,38 @@ export default function InteractiveScheduleCreator({ projectId, onScheduleCreate
     }
   });
   
+  // Enhanced progress tracking with time estimation
+  const startProgressTracking = () => {
+    let progressStep = 0;
+    const steps = [
+      "Initializing AI analysis...",
+      "Processing uploaded documents...",
+      "Analyzing project scope and requirements...", 
+      "Generating activity network and dependencies...",
+      "Calculating CPM schedule and critical path...",
+      "Finalizing schedule with resource assignments..."
+    ];
+    
+    const updateProgress = () => {
+      if (progressStep < steps.length && isGenerating) {
+        setGenerationProgress(steps[progressStep]);
+        progressStep++;
+        
+        // Update estimated time remaining based on elapsed time
+        if (generationStartTime) {
+          const elapsed = (Date.now() - generationStartTime) / 1000;
+          const baseEstimate = uploadedFiles.length > 0 ? 120 : 60;
+          const remaining = Math.max(0, baseEstimate - elapsed);
+          setEstimatedTimeRemaining(Math.round(remaining));
+        }
+        
+        setTimeout(updateProgress, progressStep === 1 ? 8000 : 15000);
+      }
+    };
+    
+    setTimeout(updateProgress, 2000);
+  };
+
   const handleGenerateSchedule = async () => {
     if (!projectDescription.trim()) {
       toast({
@@ -433,34 +492,13 @@ export default function InteractiveScheduleCreator({ projectId, onScheduleCreate
     
     setIsGenerating(true);
     setGenerationProgress("Initializing AI analysis...");
-    
-    // Set progress updates
-    const progressTimer1 = setTimeout(() => {
-      if (isGenerating) {
-        setGenerationProgress("Analyzing uploaded documents (this may take 30-60 seconds)...");
-      }
-    }, 5000);
-    
-    const progressTimer2 = setTimeout(() => {
-      if (isGenerating) {
-        setGenerationProgress("Building CPM schedule with dependencies...");
-      }
-    }, 20000);
-    
-    const progressTimer3 = setTimeout(() => {
-      if (isGenerating) {
-        setGenerationProgress("Finalizing schedule and calculating critical path...");
-      }
-    }, 35000);
+    startProgressTracking();
     
     try {
       await generateScheduleMutation.mutateAsync('create');
-    } finally {
-      setIsGenerating(false);
-      setGenerationProgress("");
-      clearTimeout(progressTimer1);
-      clearTimeout(progressTimer2);
-      clearTimeout(progressTimer3);
+    } catch (error) {
+      console.error('Generation error:', error);
+      console.error('Schedule generation failed:', error);
     }
   };
   

@@ -11,16 +11,33 @@ export async function apiRequest(
   method: string,
   url: string,
   data?: unknown | undefined,
+  options?: { timeout?: number }
 ): Promise<Response> {
-  const res = await fetch(url, {
-    method,
-    headers: data ? { "Content-Type": "application/json" } : {},
-    body: data ? JSON.stringify(data) : undefined,
-    credentials: "include",
-  });
+  // Set timeout for long-running AI operations (5 minutes for schedule generation)
+  const timeout = options?.timeout || (url.includes('/generate-ai') ? 300000 : 30000);
+  
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: data ? { "Content-Type": "application/json" } : {},
+      body: data ? JSON.stringify(data) : undefined,
+      credentials: "include",
+      signal: controller.signal,
+    });
 
-  await throwIfResNotOk(res);
-  return res;
+    await throwIfResNotOk(res);
+    return res;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`Request timeout after ${timeout / 1000} seconds. This may be due to complex document processing or AI model response time.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 type UnauthorizedBehavior = "returnNull" | "throw";
@@ -52,6 +69,8 @@ export const queryClient = new QueryClient({
     },
     mutations: {
       retry: false,
+      // Extended timeout for AI schedule generation mutations
+      mutationFn: undefined, // Will be set per mutation
     },
   },
 });
