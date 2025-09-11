@@ -14,6 +14,7 @@ import { Separator } from "@/components/ui/separator";
 import { Plus, Edit2, Trash2, GitBranch, Calendar, Clock, AlertTriangle, Save, Grid3x3, TableIcon, Info, Users, FileText, Settings } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import MSProjectGanttChart from "./GanttChart";
+import type { Activity as DbActivity } from "@shared/schema";
 
 export interface Activity {
   id: string;
@@ -461,9 +462,10 @@ export default function ScheduleEditor({
 
             <TabsContent value="gantt">
               <MSProjectGanttChart 
-                activities={activities} 
-                projectStartDate={projectStartDate}
-                onActivityClick={(activity) => handleEditActivity(activity)}
+                activities={[]} 
+                relationships={[]}
+                wbs={[]}
+                onActivitySelect={(activityId: string) => {}}
               />
             </TabsContent>
 

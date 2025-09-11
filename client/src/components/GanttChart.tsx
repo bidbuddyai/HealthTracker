@@ -280,7 +280,7 @@ export default function GanttChart({
               fill="#4b5563"
               fontWeight="500"
             >
-              {rel.lag > 0 ? `+${rel.lag}d` : `${rel.lag}d`}
+              {(rel.lag || 0) > 0 ? `+${rel.lag || 0}d` : `${rel.lag || 0}d`}
             </text>
           )}
         </g>
@@ -379,9 +379,9 @@ export default function GanttChart({
                               {activity.earlyStart && (
                                 <span>{format(parseISO(activity.earlyStart), 'MMM d')}</span>
                               )}
-                              {activity.percentComplete > 0 && (
+                              {(activity.percentComplete || 0) > 0 && (
                                 <span className="text-green-600 font-medium">
-                                  {activity.percentComplete}%
+                                  {activity.percentComplete || 0}%
                                 </span>
                               )}
                             </div>
@@ -550,10 +550,10 @@ export default function GanttChart({
                               onMouseEnter={() => setHoveredActivity(activity.id)}
                               onMouseLeave={() => setHoveredActivity(null)}
                             >
-                              {activity.percentComplete > 0 && activity.originalDuration !== 0 && (
+                              {(activity.percentComplete || 0) > 0 && activity.originalDuration !== 0 && (
                                 <div
                                   className="absolute top-0 left-0 h-full bg-black bg-opacity-25 rounded"
-                                  style={{ width: `${activity.percentComplete}%` }}
+                                  style={{ width: `${activity.percentComplete || 0}%` }}
                                 />
                               )}
                               {position.width > 50 && activity.originalDuration !== 0 && (
@@ -577,8 +577,8 @@ export default function GanttChart({
                                 {activity.totalFloat !== undefined && (
                                   <div>Float: {activity.totalFloat}d</div>
                                 )}
-                                {activity.percentComplete > 0 && (
-                                  <div className="text-green-600">Progress: {activity.percentComplete}%</div>
+                                {(activity.percentComplete || 0) > 0 && (
+                                  <div className="text-green-600">Progress: {activity.percentComplete || 0}%</div>
                                 )}
                                 {activity.isCritical && (
                                   <div className="text-red-600 font-medium">Critical Path Activity</div>
