@@ -82,7 +82,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/projects/:id", async (req, res) => {
+  app.delete("/api/projects/:id", isAuthenticated, async (req, res) => {
     try {
       const success = await storage.deleteProject(req.params.id);
       if (!success) {
