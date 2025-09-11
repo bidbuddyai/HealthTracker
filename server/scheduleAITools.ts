@@ -100,6 +100,8 @@ IMPORTANT:
 - Ensure all predecessor relationships are valid activity IDs`;
 
 export async function generateScheduleWithAI(request: ScheduleAIRequest): Promise<ScheduleAIResponse> {
+  console.log("=== AI GENERATION START ===");
+  console.log("Request:", JSON.stringify(request, null, 2));
   // Read content from uploaded files if provided
   let uploadedContent = '';
   if (request.uploadedFiles && request.uploadedFiles.length > 0) {
@@ -226,13 +228,21 @@ Provide:
       console.log('Making POE API request to:', 'https://api.poe.com/v1/chat/completions');
       console.log('Using model:', aiModel);
       
-      response = await poe.chat.completions.create({
+      // Add timeout to prevent hanging
+      const apiCall = poe.chat.completions.create({
         model: aiModel,
         messages: [
           { role: "system", content: SCHEDULE_SYSTEM_PROMPT },
           { role: "user", content: prompt }
         ]
       });
+      
+      // Set 30 second timeout
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('POE API timeout after 30 seconds')), 30000);
+      });
+      
+      response = await Promise.race([apiCall, timeoutPromise]);
     } catch (apiError: any) {
       console.error('POE API Error:', apiError);
       console.error('POE API Error Message:', apiError.message);
@@ -323,9 +333,12 @@ Provide:
       };
     }
     
-    console.log('AI response received');
+    console.log('AI response received successfully');
+    console.log("Response choices count:", response.choices?.length);
     
     let content = response.choices[0].message.content || "{}";
+    console.log("Content length:", content?.length);
+    console.log("Content preview:", content?.substring(0, 200));
     
     // Remove any thinking prefix or non-JSON content before the actual JSON
     const jsonMatch = content.match(/\{[\s\S]*\}/);
@@ -458,6 +471,7 @@ Return as JSON:
 }`;
 
   try {
+    console.log("Making POE API call...");
     const response = await poe.chat.completions.create({
       model: "Claude-Sonnet-4",  // Using Claude for better analysis
       messages: [
