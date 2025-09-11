@@ -112,9 +112,11 @@ export async function generateScheduleWithAI(request: ScheduleAIRequest): Promis
       try {
         const content = await objectStorage.readObjectContent(filePath);
         // Limit content to 5000 chars per file to avoid token limits
-        fileContents.push(`\n--- Content from uploaded file ---\n${content.substring(0, 5000)}\n--- End of file ---\n`);
+        fileContents.push(`\n--- Content from uploaded file ${filePath} ---\n${content.substring(0, 5000)}\n--- End of file ---\n`);
       } catch (error) {
         console.error(`Failed to read file ${filePath}:`, error);
+        // Add a note about the missing file instead of failing silently
+        fileContents.push(`\n--- File ${filePath} could not be read (file not found or access error) ---\n`);
       }
     }
     
@@ -237,9 +239,9 @@ Provide:
         ]
       });
       
-      // Set 30 second timeout
+      // Set 90 second timeout for complex schedule generation
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('POE API timeout after 30 seconds')), 30000);
+        setTimeout(() => reject(new Error('POE API timeout after 90 seconds')), 90000);
       });
       
       response = await Promise.race([apiCall, timeoutPromise]);
@@ -267,7 +269,7 @@ Provide:
           duration: 5,
           predecessors: [],
           successors: ["A002"],
-          status: "Not Started",
+          status: "NotStarted",
           percentComplete: 0,
           startDate: request.startDate || new Date().toISOString().split('T')[0],
           finishDate: new Date(new Date(request.startDate || new Date()).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -288,7 +290,7 @@ Provide:
           duration: 10,
           predecessors: ["A001"],
           successors: ["A003"],
-          status: "Not Started",
+          status: "NotStarted",
           percentComplete: 0,
           startDate: new Date(new Date(request.startDate || new Date()).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
           finishDate: new Date(new Date(request.startDate || new Date()).getTime() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -309,7 +311,7 @@ Provide:
           duration: 15,
           predecessors: ["A002"],
           successors: [],
-          status: "Not Started",
+          status: "NotStarted",
           percentComplete: 0,
           startDate: new Date(new Date(request.startDate || new Date()).getTime() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
           finishDate: new Date(new Date(request.startDate || new Date()).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
