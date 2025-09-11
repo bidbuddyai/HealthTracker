@@ -114,7 +114,7 @@ export class DbStorage implements IStorage {
   async deleteProject(id: string): Promise<boolean> {
     try {
       const result = await db.delete(projects).where(eq(projects.id, id));
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (error) {
       console.error("Error deleting project:", error);
       return false;
@@ -168,7 +168,7 @@ export class DbStorage implements IStorage {
   async deleteWbs(id: string): Promise<boolean> {
     try {
       const result = await db.delete(wbs).where(eq(wbs.id, id));
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (error) {
       console.error("Error deleting WBS:", error);
       return false;
@@ -227,7 +227,7 @@ export class DbStorage implements IStorage {
       
       // Then delete the activity itself
       const result = await db.delete(activities).where(eq(activities.id, id));
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (error) {
       console.error("Error deleting activity:", error);
       return false;
@@ -300,7 +300,7 @@ export class DbStorage implements IStorage {
   async deleteRelationship(id: string): Promise<boolean> {
     try {
       const result = await db.delete(relationships).where(eq(relationships.id, id));
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (error) {
       console.error("Error deleting relationship:", error);
       return false;
@@ -357,7 +357,7 @@ export class DbStorage implements IStorage {
   async deleteCalendar(id: string): Promise<boolean> {
     try {
       const result = await db.delete(calendars).where(eq(calendars.id, id));
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (error) {
       console.error("Error deleting calendar:", error);
       return false;
@@ -411,7 +411,7 @@ export class DbStorage implements IStorage {
   async deleteResource(id: string): Promise<boolean> {
     try {
       const result = await db.delete(resources).where(eq(resources.id, id));
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (error) {
       console.error("Error deleting resource:", error);
       return false;
@@ -464,7 +464,7 @@ export class DbStorage implements IStorage {
   async deleteAssignment(id: string): Promise<boolean> {
     try {
       const result = await db.delete(resourceAssignments).where(eq(resourceAssignments.id, id));
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (error) {
       console.error("Error deleting assignment:", error);
       return false;
@@ -523,7 +523,7 @@ export class DbStorage implements IStorage {
   async deleteBaseline(id: string): Promise<boolean> {
     try {
       const result = await db.delete(baselines).where(eq(baselines.id, id));
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (error) {
       console.error("Error deleting baseline:", error);
       return false;
@@ -589,7 +589,7 @@ export class DbStorage implements IStorage {
   async deleteTiaScenario(id: string): Promise<boolean> {
     try {
       const result = await db.delete(tiaScenarios).where(eq(tiaScenarios.id, id));
-      return result.rowCount > 0;
+      return (result.rowCount ?? 0) > 0;
     } catch (error) {
       console.error("Error deleting TIA scenario:", error);
       return false;
