@@ -204,6 +204,49 @@ export default function AIFloatingBubble({ projectId, defaultOpen = false }: AIF
     }
   });
 
+  // Save schedule mutation for Preview tab
+  const saveScheduleMutation = useMutation({
+    mutationFn: async (activities: Activity[]) => {
+      try {
+        console.log("Saving schedule to project...");
+        const response = await apiRequest("POST", `/api/projects/${projectId}/activities/bulk-save`, {
+          activities: activities
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error("Server error:", errorText);
+          throw new Error("Failed to save schedule - server error");
+        }
+        
+        const data = await response.json();
+        console.log("Save successful:", data);
+        return data;
+      } catch (error) {
+        console.error("Save error:", error);
+        throw error;
+      }
+    },
+    onSuccess: (data) => {
+      // Invalidate queries to refresh the project data
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", projectId, "activities"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", projectId, "relationships"] });
+      
+      toast({
+        title: "Schedule Saved",
+        description: `${data.activitiesCount || generatedActivities.length} activities saved to project.`,
+      });
+    },
+    onError: (error) => {
+      console.error("Save schedule failed:", error);
+      toast({
+        title: "Save Failed",
+        description: "Failed to save schedule to project. Please try again.",
+        variant: "destructive",
+      });
+    }
+  });
+
   // Helper functions
   const countRelationships = (activities: Activity[]) => {
     return activities.reduce((count, act) => 
@@ -1234,7 +1277,7 @@ The schedule now reflects your requested changes. What else would you like to mo
                       <div className="bg-blue-50 rounded px-3 py-2">
                         <p className="text-xs text-gray-600">Duration</p>
                         <p className="text-lg font-semibold text-blue-600">
-                          {Math.max(...generatedActivities.map(a => a.originalDuration || 0))} days
+                          {Math.max(...generatedActivities.map(a => a.duration || 0))} days
                         </p>
                       </div>
                     </div>
@@ -1257,10 +1300,10 @@ The schedule now reflects your requested changes. What else would you like to mo
                                 <td className="p-2">
                                   <input
                                     type="text"
-                                    value={activity.name}
+                                    value={activity.activityName}
                                     onChange={(e) => {
                                       const updated = [...generatedActivities];
-                                      updated[idx].name = e.target.value;
+                                      updated[idx].activityName = e.target.value;
                                       setGeneratedActivities(updated);
                                     }}
                                     className="w-full px-2 py-1 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-purple-500 focus:outline-none"
@@ -1269,11 +1312,11 @@ The schedule now reflects your requested changes. What else would you like to mo
                                 <td className="p-2 text-center">
                                   <input
                                     type="number"
-                                    value={activity.originalDuration}
+                                    value={activity.duration}
                                     onChange={(e) => {
                                       const newDuration = Math.max(1, parseInt(e.target.value) || 1);
                                       const updated = [...generatedActivities];
-                                      updated[idx].originalDuration = newDuration;
+                                      updated[idx].duration = newDuration;
                                       updated[idx].remainingDuration = newDuration;
                                       setGeneratedActivities(updated);
                                     }}
