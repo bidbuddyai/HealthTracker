@@ -14,6 +14,7 @@ import { poe } from "./poeClient";
 import { SYSTEM_ASSISTANT, ToolSchema } from "./assistantTools";
 import { registerScheduleRoutes } from "./scheduleRoutes";
 import { ObjectStorageService } from "./objectStorage";
+import { analyzeDocuments, type DocumentAnalysis, type ProcessingOptions } from "./documentAnalyzer";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -268,20 +269,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
             projectId: projectId, // Critical: set the projectId
             activityId: activity.activityId || `ACT-${crypto.randomUUID().slice(0, 8)}`,
             name: activity.activityName || activity.name || "Unnamed Activity",
-            type: activity.type || "Task",
-            originalDuration: activity.duration || activity.originalDuration || 1,
-            earlyStart: activity.earlyStart,
-            earlyFinish: activity.earlyFinish,
-            lateStart: activity.lateStart,
-            lateFinish: activity.lateFinish,
-            totalFloat: activity.totalFloat,
-            freeFloat: activity.freeFloat,
-            isCritical: activity.isCritical || false,
-            percentComplete: activity.percentComplete || 0,
-            status: activity.status === "Not Started" ? "NotStarted" :
-                   activity.status === "In Progress" ? "InProgress" :
-                   activity.status === "Completed" ? "Completed" : "NotStarted",
-            durationUnit: "days"
+            type: "Task" as const,
+            originalDuration: activity.duration || 1,
+            remainingDuration: activity.duration || 1,
+            status: activity.status === "Not Started" ? "NotStarted" as const :
+                   activity.status === "In Progress" ? "InProgress" as const :
+                   activity.status === "Completed" ? "Completed" as const : "NotStarted" as const,
+            durationUnit: "days",
+            percentComplete: activity.percentComplete || 0
           };
           
           await storage.createActivity(dbActivity);
@@ -903,9 +898,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           calculatedAt: new Date().toISOString()
         }
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error calculating schedule:", error);
-      res.status(500).json({ error: "Failed to calculate schedule", details: error.message });
+      res.status(500).json({ error: "Failed to calculate schedule", details: error?.message || "Unknown error" });
     }
   });
 
@@ -1047,23 +1042,18 @@ Return ONLY the enhanced prompt text, nothing else.`;
               // Destructure to separate status from other fields to avoid conflicts
               const { status: aiStatus, ...activityWithoutStatus } = activity;
               const dbActivity = {
-                ...activityWithoutStatus,
                 projectId: projectId, // Ensure projectId is set
                 activityId: activity.activityId || `ACT-${crypto.randomUUID().slice(0, 8)}`,
                 name: activity.activityName || "Unnamed Activity",
-                type: (activity as any).type || "Task",
+                type: "Task" as const,
+                originalDuration: activity.duration || 1,
+                remainingDuration: activity.duration || 1,
                 durationUnit: "days",
-                actualStart: null,
-                actualFinish: null,
-                constraintType: null,
-                constraintDate: null,
                 percentComplete: activity.percentComplete || 0,
                 // Properly convert AI status to database enum
-                status: aiStatus === "Not Started" ? "NotStarted" :
-                       aiStatus === "In Progress" ? "InProgress" :
-                       aiStatus === "Completed" ? "Completed" : "NotStarted",
-                responsibility: null,
-                trade: null
+                status: aiStatus === "Not Started" ? "NotStarted" as const :
+                       aiStatus === "In Progress" ? "InProgress" as const :
+                       aiStatus === "Completed" ? "Completed" as const : "NotStarted" as const
               };
               
               createdActivity = await storage.createActivity(dbActivity);
@@ -1080,16 +1070,21 @@ Return ONLY the enhanced prompt text, nothing else.`;
               };
               
               createdActivity = await storage.createActivity({
-                ...activity, 
                 projectId,
+                activityId: activity.activityId || `ACT-${crypto.randomUUID().slice(0, 8)}`,
                 name: activity.activityName || "Unnamed Activity",
+                type: "Task" as const,
+                originalDuration: activity.duration || 1,
+                remainingDuration: activity.duration || 1,
+                durationUnit: "days",
                 earlyStart: convertDateField(activity.earlyStart),
                 earlyFinish: convertDateField(activity.earlyFinish),
                 lateStart: convertDateField(activity.lateStart),
                 lateFinish: convertDateField(activity.lateFinish),
-                status: activity.status === "Not Started" ? "NotStarted" :
-                       activity.status === "In Progress" ? "InProgress" :
-                       activity.status === "Completed" ? "Completed" : "NotStarted"
+                status: activity.status === "Not Started" ? "NotStarted" as const :
+                       activity.status === "In Progress" ? "InProgress" as const :
+                       activity.status === "Completed" ? "Completed" as const : "NotStarted" as const,
+                percentComplete: activity.percentComplete || 0
               });
             }
             
@@ -1254,7 +1249,8 @@ Return ONLY the enhanced prompt text, nothing else.`;
 
   app.post("/api/schedule/ai/identify-impacts", isAuthenticated, async (req, res) => {
     try {
-      const result = await identifyScheduleImpacts(req.body);
+      const { meetingNotes, currentSchedule } = req.body;
+      const result = await identifyScheduleImpacts(meetingNotes, currentSchedule);
       res.json(result);
     } catch (error) {
       console.error("Error identifying impacts:", error);
@@ -1319,7 +1315,7 @@ Return ONLY the enhanced prompt text, nothing else.`;
   app.post("/api/objects/upload", isAuthenticated, async (req, res) => {
     try {
       const fileName = req.query.fileName as string || 'uploaded_file';
-      const userId = req.user?.id;
+      const userId = (req as any).user?.claims?.sub;
       
       if (!userId) {
         return res.status(401).json({ error: "User not authenticated" });
@@ -1332,7 +1328,8 @@ Return ONLY the enhanced prompt text, nothing else.`;
       
       // Create upload URL for object storage
       const objectStorage = new ObjectStorageService();
-      const uploadUrl = await objectStorage.generatePresignedUploadUrl(uniqueFileName);
+      // For now, return a simple upload endpoint since generatePresignedUploadUrl doesn't exist
+      const uploadUrl = `/api/objects/upload/${uniqueFileName}`;
       
       res.json({
         method: "PUT",
@@ -1350,6 +1347,122 @@ Return ONLY the enhanced prompt text, nothing else.`;
     res.json({ status: "healthy", service: "ScheduleSam API" });
   });
 
+  // Document Analysis endpoints
+  app.post("/api/documents/analyze", isAuthenticated, async (req, res) => {
+    try {
+      const { filePaths } = req.body;
+      
+      if (!filePaths || !Array.isArray(filePaths)) {
+        return res.status(400).json({ error: "filePaths array is required" });
+      }
+      
+      console.log(`Analyzing ${filePaths.length} documents...`);
+      const analyses = await analyzeDocuments(filePaths);
+      
+      res.json({ 
+        success: true, 
+        analyses,
+        summary: {
+          totalDocuments: analyses.length,
+          totalTokens: analyses.reduce((sum, a) => sum + a.totalTokens, 0),
+          avgRelevanceScore: analyses.length > 0 
+            ? analyses.reduce((sum, a) => sum + (a.sections.reduce((s, sec) => s + sec.relevanceScore, 0) / a.sections.length), 0) / analyses.length
+            : 0
+        }
+      });
+    } catch (error) {
+      console.error("Document analysis failed:", error);
+      res.status(500).json({ 
+        error: "Failed to analyze documents", 
+        details: error instanceof Error ? error.message : "Unknown error" 
+      });
+    }
+  });
+  
+  app.post("/api/documents/preview-processing", isAuthenticated, async (req, res) => {
+    try {
+      const { analyses, processingOptions }: { 
+        analyses: DocumentAnalysis[], 
+        processingOptions: ProcessingOptions 
+      } = req.body;
+      
+      if (!analyses || !processingOptions) {
+        return res.status(400).json({ error: "analyses and processingOptions are required" });
+      }
+      
+      // Calculate preview information without actually processing
+      let totalTokens = 0;
+      let sectionsToProcess = 0;
+      const previewContent: { fileName: string; sections: number; tokens: number; }[] = [];
+      
+      for (const analysis of analyses) {
+        let sectionsForThisFile = 0;
+        let tokensForThisFile = 0;
+        
+        switch (processingOptions.mode) {
+          case 'quick':
+            const quickSections = analysis.sections.filter(s => s.relevanceScore > 50);
+            sectionsForThisFile = quickSections.length;
+            tokensForThisFile = quickSections.reduce((sum, s) => sum + s.tokens, 0);
+            break;
+            
+          case 'standard':
+            const standardSections = analysis.sections.filter(s => s.isSelected);
+            sectionsForThisFile = standardSections.length;
+            tokensForThisFile = standardSections.reduce((sum, s) => sum + s.tokens, 0);
+            break;
+            
+          case 'deep':
+            sectionsForThisFile = analysis.sections.length;
+            tokensForThisFile = analysis.totalTokens;
+            break;
+            
+          case 'custom':
+            const customSections = analysis.sections.filter(s => 
+              processingOptions.selectedSections?.includes(s.id)
+            );
+            sectionsForThisFile = customSections.length;
+            tokensForThisFile = customSections.reduce((sum, s) => sum + s.tokens, 0);
+            break;
+        }
+        
+        totalTokens += tokensForThisFile;
+        sectionsToProcess += sectionsForThisFile;
+        
+        previewContent.push({
+          fileName: analysis.fileName,
+          sections: sectionsForThisFile,
+          tokens: tokensForThisFile
+        });
+      }
+      
+      // Apply token limit if specified
+      if (processingOptions.maxTokens && totalTokens > processingOptions.maxTokens) {
+        totalTokens = processingOptions.maxTokens;
+      }
+      
+      // Estimate cost (simplified pricing)
+      const estimatedCost = (totalTokens / 1000000) * 3.0; // $3 per million tokens
+      
+      res.json({
+        success: true,
+        preview: {
+          totalTokens,
+          sectionsToProcess,
+          estimatedCost,
+          fileBreakdown: previewContent,
+          processingMode: processingOptions.mode
+        }
+      });
+    } catch (error) {
+      console.error("Processing preview failed:", error);
+      res.status(500).json({ 
+        error: "Failed to generate processing preview", 
+        details: error instanceof Error ? error.message : "Unknown error" 
+      });
+    }
+  });
+  
   // Register schedule-related routes (includes export functionality)
   registerScheduleRoutes(app);
 

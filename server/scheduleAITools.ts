@@ -1,6 +1,12 @@
 import { poe } from "./poeClient";
 import type { Activity } from "../client/src/components/ScheduleEditor";
 import { ObjectStorageService } from "./objectStorage";
+import { 
+  analyzeDocuments, 
+  processContentWithOptions, 
+  type DocumentAnalysis,
+  type ProcessingOptions 
+} from "./documentAnalyzer";
 
 export interface ScheduleAIRequest {
   type: 'create' | 'update' | 'lookahead' | 'analyze';
@@ -11,6 +17,12 @@ export interface ScheduleAIRequest {
   constraints?: string[];
   uploadedFiles?: string[];
   model?: string;
+  documentProcessing?: {
+    mode: 'quick' | 'standard' | 'deep' | 'custom';
+    selectedSections?: string[]; // section IDs for custom mode
+    maxTokens?: number;
+  };
+  documentAnalyses?: DocumentAnalysis[]; // Pre-analyzed documents
 }
 
 export interface ScheduleAIResponse {
@@ -18,6 +30,17 @@ export interface ScheduleAIResponse {
   summary: string;
   criticalPath?: string[];
   recommendations?: string[];
+  documentInsights?: {
+    extractedInfo: {
+      contractDuration?: string;
+      projectType?: string;
+      keyDates?: string[];
+      milestones?: string[];
+      constraints?: string[];
+    };
+    tokensUsed: number;
+    sectionsProcessed: number;
+  };
 }
 
 // AI prompt for schedule operations
@@ -102,38 +125,107 @@ IMPORTANT:
 export async function generateScheduleWithAI(request: ScheduleAIRequest): Promise<ScheduleAIResponse> {
   console.log("=== AI GENERATION START ===");
   console.log("Request:", JSON.stringify(request, null, 2));
-  // Read content from uploaded files if provided
+  // Process uploaded files intelligently based on user preferences
   let uploadedContent = '';
+  let documentInsights: ScheduleAIResponse['documentInsights'] = {
+    extractedInfo: { keyDates: [], milestones: [], constraints: [] },
+    tokensUsed: 0,
+    sectionsProcessed: 0
+  };
+  
   if (request.uploadedFiles && request.uploadedFiles.length > 0) {
-    const objectStorage = new ObjectStorageService();
-    const fileContents: string[] = [];
-    
-    for (const filePath of request.uploadedFiles) {
-      try {
-        const content = await objectStorage.readObjectContent(filePath);
-        const fileSize = content.length;
-        
-        // Log file size for awareness
-        console.log(`Processing uploaded file: ${filePath}`);
-        console.log(`File size: ${fileSize.toLocaleString()} characters`);
-        
-        // Process complete file content without any character limits
-        // Trust the AI model to handle large contexts effectively
-        console.log(`Processing complete file content (unlimited analysis enabled)`);
-        const processedContent = content;
-        
-        fileContents.push(`\n--- Content from uploaded file ${filePath} (${fileSize.toLocaleString()} chars) ---\n${processedContent}\n--- End of file ---\n`);
-        
-      } catch (error) {
-        console.error(`Failed to read file ${filePath}:`, error);
-        // Add detailed error info for AI context
-        fileContents.push(`\n--- IMPORTANT: File ${filePath} could not be read ---\nError: ${error instanceof Error ? error.message : 'Unknown error'}\nNote: AI should generate schedule based on user requirements without this document context.\n--- End of file error ---\n`);
+    try {
+      let documentAnalyses: DocumentAnalysis[];
+      
+      // Use pre-analyzed documents if provided, otherwise analyze them
+      if (request.documentAnalyses && request.documentAnalyses.length > 0) {
+        documentAnalyses = request.documentAnalyses;
+        console.log('Using pre-analyzed documents');
+      } else {
+        console.log('Analyzing documents for intelligent processing...');
+        documentAnalyses = await analyzeDocuments(request.uploadedFiles);
       }
-    }
-    
-    if (fileContents.length > 0) {
-      uploadedContent = `\n\nUploaded Documents Content:\n${fileContents.join('\n')}`;
-      console.log(`Total uploaded content length: ${uploadedContent.length.toLocaleString()} characters`);
+      
+      // Process documents based on user's processing preferences
+      const processingOptions: ProcessingOptions = {
+        mode: request.documentProcessing?.mode || 'standard',
+        selectedSections: request.documentProcessing?.selectedSections,
+        maxTokens: request.documentProcessing?.maxTokens
+      };
+      
+      console.log(`Processing documents with mode: ${processingOptions.mode}`);
+      
+      const fileContents: string[] = [];
+      let totalTokensUsed = 0;
+      let totalSectionsProcessed = 0;
+      
+      for (const analysis of documentAnalyses) {
+        const processedContent = processContentWithOptions(analysis, processingOptions);
+        const tokensUsed = Math.ceil(processedContent.length / 4); // Rough estimate
+        totalTokensUsed += tokensUsed;
+        
+        if (processingOptions.mode === 'custom') {
+          totalSectionsProcessed += analysis.sections.filter(s => 
+            processingOptions.selectedSections?.includes(s.id)
+          ).length;
+        } else {
+          totalSectionsProcessed += analysis.sections.filter(s => s.isSelected).length;
+        }
+        
+        // Merge key information from all documents
+        const keyInfo = analysis.keyInformation;
+        if (keyInfo.contractDuration) documentInsights.extractedInfo.contractDuration = keyInfo.contractDuration;
+        if (keyInfo.projectType) documentInsights.extractedInfo.projectType = keyInfo.projectType;
+        if (keyInfo.startDate && !documentInsights.extractedInfo.keyDates?.includes(keyInfo.startDate)) {
+          documentInsights.extractedInfo.keyDates?.push(keyInfo.startDate);
+        }
+        if (keyInfo.endDate && !documentInsights.extractedInfo.keyDates?.includes(keyInfo.endDate)) {
+          documentInsights.extractedInfo.keyDates?.push(keyInfo.endDate);
+        }
+        documentInsights.extractedInfo.milestones?.push(...keyInfo.milestones);
+        documentInsights.extractedInfo.constraints?.push(...keyInfo.constraints);
+        
+        if (processedContent.trim()) {
+          fileContents.push(
+            `\n--- Processed content from ${analysis.fileName} (${tokensUsed.toLocaleString()} tokens, ${totalSectionsProcessed} sections) ---\n` +
+            `Key Information Extracted:\n` +
+            `- Contract Duration: ${keyInfo.contractDuration || 'Not specified'}\n` +
+            `- Project Type: ${keyInfo.projectType || 'Not specified'}\n` +
+            `- Key Dates: ${[keyInfo.startDate, keyInfo.endDate].filter(Boolean).join(', ') || 'None found'}\n` +
+            `- Milestones: ${keyInfo.milestones.length > 0 ? keyInfo.milestones.slice(0, 3).join(', ') + (keyInfo.milestones.length > 3 ? '...' : '') : 'None found'}\n` +
+            `- Constraints: ${keyInfo.constraints.length > 0 ? keyInfo.constraints.slice(0, 2).join(', ') + (keyInfo.constraints.length > 2 ? '...' : '') : 'None found'}\n\n` +
+            `Relevant Content:\n${processedContent}\n--- End of processed content ---\n`
+          );
+        }
+      }
+      
+      documentInsights.tokensUsed = totalTokensUsed;
+      documentInsights.sectionsProcessed = totalSectionsProcessed;
+      
+      if (fileContents.length > 0) {
+        uploadedContent = `\n\nIntelligently Processed Documents (${totalTokensUsed.toLocaleString()} tokens from ${totalSectionsProcessed} sections):\n${fileContents.join('\n')}`;
+        console.log(`Smart processing complete: ${totalTokensUsed.toLocaleString()} tokens from ${totalSectionsProcessed} sections`);
+      }
+      
+    } catch (error) {
+      console.error('Document processing failed, falling back to basic processing:', error);
+      // Fallback to basic processing
+      const objectStorage = new ObjectStorageService();
+      const fileContents: string[] = [];
+      
+      for (const filePath of request.uploadedFiles) {
+        try {
+          const content = await objectStorage.readObjectContent(filePath);
+          fileContents.push(`\n--- Content from ${filePath} (fallback processing) ---\n${content}\n--- End of file ---\n`);
+        } catch (fileError) {
+          console.error(`Failed to read file ${filePath}:`, fileError);
+          fileContents.push(`\n--- ERROR: Could not read ${filePath} ---\n`);
+        }
+      }
+      
+      if (fileContents.length > 0) {
+        uploadedContent = `\n\nDocument Content (fallback processing):\n${fileContents.join('\n')}`;
+      }
     }
   }
   
@@ -306,7 +398,7 @@ Provide:
           duration: 5,
           predecessors: [],
           successors: ["A002"],
-          status: "Not Started",
+          status: "Not Started" as const,
           percentComplete: 0,
           startDate: request.startDate || new Date().toISOString().split('T')[0],
           finishDate: new Date(new Date(request.startDate || new Date()).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -327,7 +419,7 @@ Provide:
           duration: 10,
           predecessors: ["A001"],
           successors: ["A003"],
-          status: "Not Started",
+          status: "Not Started" as const,
           percentComplete: 0,
           startDate: new Date(new Date(request.startDate || new Date()).getTime() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
           finishDate: new Date(new Date(request.startDate || new Date()).getTime() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
@@ -348,7 +440,7 @@ Provide:
           duration: 15,
           predecessors: ["A002"],
           successors: [],
-          status: "Not Started",
+          status: "Not Started" as const,
           percentComplete: 0,
           startDate: new Date(new Date(request.startDate || new Date()).getTime() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
           finishDate: new Date(new Date(request.startDate || new Date()).getTime() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],

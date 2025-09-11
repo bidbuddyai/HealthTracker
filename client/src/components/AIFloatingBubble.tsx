@@ -44,6 +44,41 @@ import type { UploadResult } from "@uppy/core";
 import ScheduleEditor, { type Activity } from "./ScheduleEditor";
 import { motion, AnimatePresence } from "framer-motion";
 
+// Document analysis interfaces
+interface DocumentSection {
+  id: string;
+  title: string;
+  content: string;
+  relevanceScore: number;
+  category: "project_details" | "schedule" | "specifications" | "constraints" | "dates" | "scope" | "other";
+  tokens: number;
+  keywords: string[];
+  isSelected: boolean;
+}
+
+interface DocumentAnalysis {
+  fileName: string;
+  filePath: string;
+  totalSize: number;
+  totalTokens: number;
+  sections: DocumentSection[];
+  keyInformation: {
+    contractDuration?: string;
+    projectType?: string;
+    startDate?: string;
+    endDate?: string;
+    milestones: string[];
+    constraints: string[];
+  };
+  processingOptions: {
+    quick: { tokens: number; cost: number; description: string };
+    standard: { tokens: number; cost: number; description: string };
+    deep: { tokens: number; cost: number; description: string };
+  };
+}
+
+type ProcessingMode = "quick" | "standard" | "deep" | "custom";
+
 interface AIFloatingBubbleProps {
   projectId: string;
   defaultOpen?: boolean;
@@ -110,7 +145,20 @@ export default function AIFloatingBubble({ projectId, defaultOpen = false }: AIF
   const [isGenerating, setIsGenerating] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [isQuickGenerateDragOver, setIsQuickGenerateDragOver] = useState(false); // Separate state for Quick Generate
+  const [isQuickGenerateDragOver, setIsQuickGenerateDragOver] = useState(false);
+  
+  // Document processing states
+  const [documentAnalyses, setDocumentAnalyses] = useState<DocumentAnalysis[]>([]);
+  const [processingMode, setProcessingMode] = useState<ProcessingMode>("standard");
+  const [isAnalyzingDocs, setIsAnalyzingDocs] = useState(false);
+  const [showDocumentPreview, setShowDocumentPreview] = useState(false);
+  const [processingPreview, setProcessingPreview] = useState<{
+    totalTokens: number;
+    sectionsToProcess: number;
+    estimatedCost: number;
+    fileBreakdown: { fileName: string; sections: number; tokens: number; }[];
+  } | null>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const miniChatScrollRef = useRef<HTMLDivElement>(null);
@@ -129,11 +177,76 @@ export default function AIFloatingBubble({ projectId, defaultOpen = false }: AIF
     }
   }, [chatHistory]);
 
+  // Document analysis mutation
+  const analyzeDocumentsMutation = useMutation({
+    mutationFn: async (filePaths: string[]) => {
+      const response = await apiRequest("POST", "/api/documents/analyze", {
+        filePaths
+      });
+      
+      if (!response.ok) {
+        throw new Error("Failed to analyze documents");
+      }
+      
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setDocumentAnalyses(data.analyses);
+      setShowDocumentPreview(true);
+      
+      toast({
+        title: "Documents Analyzed",
+        description: `Analyzed ${data.analyses.length} documents with ${data.summary.totalTokens.toLocaleString()} total tokens.`,
+      });
+    },
+    onError: (error) => {
+      console.error("Document analysis failed:", error);
+      toast({
+        title: "Analysis Failed",
+        description: "Failed to analyze documents. Using fallback processing.",
+        variant: "destructive"
+      });
+    }
+  });
+  
+  // Processing preview mutation
+  const previewProcessingMutation = useMutation({
+    mutationFn: async (options: { mode: ProcessingMode; selectedSections?: string[] }) => {
+      const response = await apiRequest("POST", "/api/documents/preview-processing", {
+        analyses: documentAnalyses,
+        processingOptions: {
+          mode: options.mode,
+          selectedSections: options.selectedSections
+        }
+      });
+      
+      if (!response.ok) {
+        throw new Error("Failed to preview processing");
+      }
+      
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setProcessingPreview(data.preview);
+    }
+  });
+
   // Generate schedule mutation
   const generateScheduleMutation = useMutation({
     mutationFn: async (request: { message: string; isInitial?: boolean }) => {
       try {
         console.log("Starting schedule generation...");
+        
+        // Prepare document processing options
+        const documentProcessing = documentAnalyses.length > 0 ? {
+          mode: processingMode,
+          selectedSections: processingMode === 'custom' 
+            ? documentAnalyses.flatMap(doc => 
+                doc.sections.filter(s => s.isSelected).map(s => s.id)
+              )
+            : undefined
+        } : undefined;
+        
         const response = await apiRequest("POST", "/api/schedule/ai/generate", {
           type: request.isInitial ? "create" : "update",
           projectDescription: request.message,
@@ -141,7 +254,9 @@ export default function AIFloatingBubble({ projectId, defaultOpen = false }: AIF
           model: selectedModel,
           projectId: projectId, // Essential for saving changes!
           uploadedFiles,
-          currentActivities: generatedActivities
+          currentActivities: generatedActivities,
+          documentProcessing,
+          documentAnalyses: documentAnalyses.length > 0 ? documentAnalyses : undefined
         });
         
         if (!response.ok) {
@@ -272,11 +387,12 @@ export default function AIFloatingBubble({ projectId, defaultOpen = false }: AIF
   const extractDates = (activities: Activity[]) => {
     const dates: { start?: string; end?: string } = {};
     if (activities.length > 0) {
-      dates.start = activities[0]?.earlyStart || undefined;
+      dates.start = activities[0]?.startDate || activities[0]?.earlyStart?.toString() || undefined;
       let lastDate = dates.start;
       activities.forEach(act => {
-        if (act.earlyFinish && (!lastDate || act.earlyFinish > lastDate)) {
-          lastDate = act.earlyFinish;
+        const finishDate = act.finishDate || act.earlyFinish?.toString();
+        if (finishDate && (!lastDate || finishDate > lastDate)) {
+          lastDate = finishDate;
         }
       });
       dates.end = lastDate;
@@ -434,20 +550,88 @@ The schedule now reflects your requested changes. What else would you like to mo
     );
   };
 
-  const handleFileUpload = (result: UploadResult) => {
-    const newFiles = result.successful.map(file => 
+  const handleFileUpload = (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
+    const successful = result.successful || [];
+    const newFiles = successful.map((file: any) => 
       file.response?.uploadURL || file.response?.url || ''
     ).filter(Boolean);
     
     setUploadedFiles(prev => [...prev, ...newFiles]);
     
+    // Automatically analyze uploaded documents
+    if (newFiles.length > 0) {
+      setIsAnalyzingDocs(true);
+      analyzeDocumentsMutation.mutate(newFiles, {
+        onSettled: () => setIsAnalyzingDocs(false)
+      });
+    }
+    
     // Add system message about file upload
     const fileMessage: ChatMessage = {
       role: "system",
-      content: `📎 Uploaded ${result.successful.length} file(s). The AI will analyze these documents when generating the schedule.`,
+      content: `📎 Uploaded ${successful.length} file(s). ${newFiles.length > 0 ? 'Analyzing content for intelligent processing...' : 'Files will be processed with basic analysis.'}`,
       timestamp: new Date()
     };
     setChatHistory(prev => [...prev, fileMessage]);
+  };
+  
+  // Handle processing mode changes
+  const handleProcessingModeChange = (mode: ProcessingMode) => {
+    setProcessingMode(mode);
+    if (documentAnalyses.length > 0) {
+      previewProcessingMutation.mutate({ mode });
+    }
+  };
+  
+  // Handle section selection for custom mode
+  const handleSectionToggle = (docIndex: number, sectionId: string) => {
+    setDocumentAnalyses(prev => 
+      prev.map((doc, idx) => 
+        idx === docIndex 
+          ? {
+              ...doc,
+              sections: doc.sections.map(section => 
+                section.id === sectionId 
+                  ? { ...section, isSelected: !section.isSelected }
+                  : section
+              )
+            }
+          : doc
+      )
+    );
+    
+    // Update preview if in custom mode
+    if (processingMode === 'custom') {
+      const selectedSections = documentAnalyses.flatMap(doc => 
+        doc.sections.filter(s => s.isSelected).map(s => s.id)
+      );
+      previewProcessingMutation.mutate({ 
+        mode: 'custom', 
+        selectedSections 
+      });
+    }
+  };
+  
+  // Get relevance score color
+  const getRelevanceColor = (score: number) => {
+    if (score >= 70) return "text-green-600 bg-green-50";
+    if (score >= 40) return "text-yellow-600 bg-yellow-50";
+    return "text-red-600 bg-red-50";
+  };
+  
+  // Get category icon
+  const getCategoryIcon = (category: DocumentSection['category']) => {
+    const icons = {
+      project_details: Info,
+      schedule: Calendar,
+      specifications: FileText,
+      constraints: AlertCircle,
+      dates: Clock,
+      scope: GitBranch,
+      other: FileText
+    };
+    const Icon = icons[category];
+    return <Icon className="w-4 h-4" />;
   };
 
   const handleQuickAction = (action: string) => {
@@ -1175,37 +1359,255 @@ The schedule now reflects your requested changes. What else would you like to mo
               </TabsContent>
 
               {/* Files Tab */}
-              <TabsContent value="files" className="px-6 py-4">
-                <div
-                  className={`border-2 border-dashed rounded-lg p-8 text-center ${
-                    isDragOver ? 'border-purple-500 bg-purple-50' : 'border-gray-300'
-                  }`}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    setIsDragOver(true);
-                  }}
-                  onDragLeave={() => setIsDragOver(false)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    setIsDragOver(false);
-                  }}
-                >
-                  <ObjectUploader
-                    onUploadComplete={handleFileUpload}
-                    projectId={projectId}
-                    folder="schedule-docs"
-                  />
+              <TabsContent value="files" className="px-6 py-4 h-[calc(100%-60px)] overflow-y-auto">
+                <div className="space-y-4">
+                  <Alert className="bg-blue-50 border-blue-200">
+                    <Info className="w-4 h-4 text-blue-600" />
+                    <AlertDescription className="text-sm">
+                      <strong>Smart Document Processing:</strong> Upload documents and choose how much content to analyze. Save costs with intelligent content selection.
+                    </AlertDescription>
+                  </Alert>
+                
+                  {/* File Upload Section */}
+                  <div
+                    className={`border-2 border-dashed rounded-lg p-6 text-center ${
+                      isDragOver ? 'border-purple-500 bg-purple-50' : 'border-gray-300'
+                    }`}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      setIsDragOver(true);
+                    }}
+                    onDragLeave={() => setIsDragOver(false)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setIsDragOver(false);
+                    }}
+                  >
+                    <Upload className="w-8 h-8 text-gray-400 mx-auto mb-2" />
+                    <h3 className="font-medium mb-1">Upload Project Documents</h3>
+                    <p className="text-sm text-gray-500 mb-3">
+                      PDF, Word, Excel, or text files
+                    </p>
+                    
+                    <ObjectUploader
+                      onComplete={handleFileUpload}
+                      onGetUploadParameters={async () => ({
+                        method: "PUT",
+                        url: `/api/objects/upload/${projectId}/schedule-docs`
+                      })}
+                      maxNumberOfFiles={10}
+                    >
+                      Upload Documents
+                    </ObjectUploader>
+                    
+                    {isAnalyzingDocs && (
+                      <div className="mt-3 flex items-center justify-center gap-2 text-sm text-blue-600">
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Analyzing document content...
+                      </div>
+                    )}
+                  </div>
                   
+                  {/* Document Analysis Results */}
+                  {documentAnalyses.length > 0 && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="font-semibold">Document Analysis</h3>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setShowDocumentPreview(!showDocumentPreview)}
+                        >
+                          {showDocumentPreview ? 'Hide Details' : 'Show Details'}
+                        </Button>
+                      </div>
+                      
+                      {/* Processing Mode Selection */}
+                      <div className="space-y-3">
+                        <Label className="text-sm font-medium">Processing Mode</Label>
+                        <div className="grid grid-cols-2 gap-2">
+                          <Button
+                            size="sm"
+                            variant={processingMode === 'quick' ? 'default' : 'outline'}
+                            onClick={() => handleProcessingModeChange('quick')}
+                            className="h-auto p-3 flex flex-col items-start"
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <Wand2 className="w-4 h-4" />
+                              <span className="font-medium">Quick</span>
+                            </div>
+                            <span className="text-xs text-left">Key facts only</span>
+                          </Button>
+                          
+                          <Button
+                            size="sm"
+                            variant={processingMode === 'standard' ? 'default' : 'outline'}
+                            onClick={() => handleProcessingModeChange('standard')}
+                            className="h-auto p-3 flex flex-col items-start"
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <CheckCircle className="w-4 h-4" />
+                              <span className="font-medium">Standard</span>
+                            </div>
+                            <span className="text-xs text-left">Balanced analysis</span>
+                          </Button>
+                          
+                          <Button
+                            size="sm"
+                            variant={processingMode === 'deep' ? 'default' : 'outline'}
+                            onClick={() => handleProcessingModeChange('deep')}
+                            className="h-auto p-3 flex flex-col items-start"
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <RefreshCw className="w-4 h-4" />
+                              <span className="font-medium">Deep</span>
+                            </div>
+                            <span className="text-xs text-left">Complete analysis</span>
+                          </Button>
+                          
+                          <Button
+                            size="sm"
+                            variant={processingMode === 'custom' ? 'default' : 'outline'}
+                            onClick={() => handleProcessingModeChange('custom')}
+                            className="h-auto p-3 flex flex-col items-start"
+                          >
+                            <div className="flex items-center gap-2 mb-1">
+                              <Plus className="w-4 h-4" />
+                              <span className="font-medium">Custom</span>
+                            </div>
+                            <span className="text-xs text-left">Select sections</span>
+                          </Button>
+                        </div>
+                      </div>
+                      
+                      {/* Processing Preview */}
+                      {processingPreview && (
+                        <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                          <h4 className="font-medium text-sm">Processing Preview</h4>
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <span className="text-gray-600">Tokens:</span>
+                              <span className="font-medium ml-2">{processingPreview.totalTokens.toLocaleString()}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">Sections:</span>
+                              <span className="font-medium ml-2">{processingPreview.sectionsToProcess}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">Est. Cost:</span>
+                              <span className="font-medium ml-2 text-green-600">${processingPreview.estimatedCost.toFixed(3)}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-600">Mode:</span>
+                              <span className="font-medium ml-2 capitalize">{processingMode}</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Document Details */}
+                      {showDocumentPreview && (
+                        <div className="space-y-4">
+                          {documentAnalyses.map((doc, docIndex) => (
+                            <Card key={docIndex} className="p-4">
+                              <div className="space-y-3">
+                                <div className="flex items-center justify-between">
+                                  <h4 className="font-medium flex items-center gap-2">
+                                    <FileText className="w-4 h-4" />
+                                    {doc.fileName}
+                                  </h4>
+                                  <Badge variant="outline" className="text-xs">
+                                    {doc.totalTokens.toLocaleString()} tokens
+                                  </Badge>
+                                </div>
+                                
+                                {/* Key Information */}
+                                {(doc.keyInformation.contractDuration || doc.keyInformation.projectType || doc.keyInformation.milestones.length > 0) && (
+                                  <div className="bg-blue-50 rounded p-3 text-sm">
+                                    <h5 className="font-medium mb-2 text-blue-900">Extracted Information</h5>
+                                    <div className="space-y-1 text-blue-800">
+                                      {doc.keyInformation.contractDuration && (
+                                        <div><strong>Duration:</strong> {doc.keyInformation.contractDuration}</div>
+                                      )}
+                                      {doc.keyInformation.projectType && (
+                                        <div><strong>Type:</strong> {doc.keyInformation.projectType}</div>
+                                      )}
+                                      {doc.keyInformation.milestones.length > 0 && (
+                                        <div><strong>Milestones:</strong> {doc.keyInformation.milestones.slice(0, 2).join(', ')}{doc.keyInformation.milestones.length > 2 ? '...' : ''}</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                                
+                                {/* Section Selection for Custom Mode */}
+                                {processingMode === 'custom' && (
+                                  <div className="space-y-2">
+                                    <h5 className="text-sm font-medium">Select Sections to Process:</h5>
+                                    <div className="max-h-40 overflow-y-auto space-y-2">
+                                      {doc.sections.map((section) => (
+                                        <div key={section.id} className="flex items-start gap-3 p-2 border rounded hover:bg-gray-50">
+                                          <input
+                                            type="checkbox"
+                                            checked={section.isSelected}
+                                            onChange={() => handleSectionToggle(docIndex, section.id)}
+                                            className="mt-1"
+                                          />
+                                          <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                              {getCategoryIcon(section.category)}
+                                              <span className="text-sm font-medium truncate">{section.title}</span>
+                                              <Badge className={`text-xs ${getRelevanceColor(section.relevanceScore)}`}>
+                                                {section.relevanceScore}%
+                                              </Badge>
+                                            </div>
+                                            <p className="text-xs text-gray-600 line-clamp-2">
+                                              {section.content.substring(0, 100)}...
+                                            </p>
+                                            <div className="flex items-center gap-2 mt-1">
+                                              <Badge variant="outline" className="text-xs">
+                                                {section.tokens} tokens
+                                              </Badge>
+                                              <Badge variant="outline" className="text-xs capitalize">
+                                                {section.category.replace('_', ' ')}
+                                              </Badge>
+                                            </div>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </Card>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {/* Uploaded Files List */}
                   {uploadedFiles.length > 0 && (
-                    <div className="mt-4 space-y-2">
-                      {uploadedFiles.map((file, idx) => (
-                        <Alert key={idx}>
-                          <FileText className="w-4 h-4" />
-                          <AlertDescription>
-                            Document {idx + 1} uploaded successfully
-                          </AlertDescription>
-                        </Alert>
-                      ))}
+                    <div className="space-y-2">
+                      <h4 className="font-medium text-sm">Uploaded Files:</h4>
+                      <div className="space-y-2">
+                        {uploadedFiles.map((file, index) => (
+                          <div key={index} className="flex items-center gap-2 p-2 bg-gray-100 rounded text-sm">
+                            <FileText className="w-4 h-4" />
+                            <span className="truncate flex-1">{file.split('/').pop()}</span>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-6 w-6"
+                              onClick={() => {
+                                setUploadedFiles(prev => prev.filter((_, i) => i !== index));
+                                setDocumentAnalyses(prev => prev.filter(doc => doc.filePath !== file));
+                              }}
+                            >
+                              <X className="w-3 h-3" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>
@@ -1236,19 +1638,21 @@ The schedule now reflects your requested changes. What else would you like to mo
                         onClick={() => {
                           // Add a new activity
                           const newActivity: Activity = {
+                            id: crypto.randomUUID(),
                             activityId: `NEW_${Date.now()}`,
-                            name: "New Activity",
-                            originalDuration: 5,
-                            remainingDuration: 5,
+                            activityName: "New Activity",
+                            duration: 5,
                             status: "Not Started",
                             percentComplete: 0,
-                            type: "Task",
                             predecessors: [],
+                            successors: [],
                             isCritical: false,
                             totalFloat: 0,
                             freeFloat: 0,
-                            earlyStart: new Date().toISOString(),
-                            earlyFinish: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
+                            earlyStart: 0,
+                            earlyFinish: 5,
+                            startDate: new Date().toISOString().split('T')[0],
+                            finishDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
                           };
                           setGeneratedActivities([...generatedActivities, newActivity]);
                           toast({

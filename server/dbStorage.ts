@@ -311,7 +311,7 @@ export class DbStorage implements IStorage {
   async getCalendarsByProject(projectId: string | null): Promise<Calendar[]> {
     try {
       if (projectId === null) {
-        return await db.select().from(calendars).where(eq(calendars.projectId, null));
+        return await db.select().from(calendars).where(sql`${calendars.projectId} IS NULL`);
       }
       return await db.select().from(calendars).where(eq(calendars.projectId, projectId));
     } catch (error) {
@@ -692,21 +692,17 @@ export class DbStorage implements IStorage {
   // Audit Logs
   async getAuditLogs(projectId: string, entityId?: string, entityType?: string): Promise<AuditLog[]> {
     try {
-      let query = db.select().from(auditLogs).where(eq(auditLogs.projectId, projectId));
+      const conditions = [eq(auditLogs.projectId, projectId)];
       
       if (entityId) {
-        query = query.where(and(eq(auditLogs.projectId, projectId), eq(auditLogs.entityId, entityId)));
+        conditions.push(eq(auditLogs.entityId, entityId));
       }
       
       if (entityType) {
-        query = query.where(and(
-          eq(auditLogs.projectId, projectId), 
-          eq(auditLogs.entityType, entityType),
-          entityId ? eq(auditLogs.entityId, entityId) : sql`true`
-        ));
+        conditions.push(eq(auditLogs.entityType, entityType));
       }
       
-      return await query;
+      return await db.select().from(auditLogs).where(and(...conditions));
     } catch (error) {
       console.error("Error getting audit logs:", error);
       return [];
