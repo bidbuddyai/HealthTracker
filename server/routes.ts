@@ -250,6 +250,58 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Add the missing bulk-save endpoint
+  app.post("/api/projects/:projectId/activities/bulk-save", isAuthenticated, async (req, res) => {
+    try {
+      const projectId = req.params.projectId;
+      const activities = req.body.activities;
+      
+      console.log(`Bulk saving ${activities.length} activities to project ${projectId}`);
+      
+      let savedCount = 0;
+      for (const activity of activities) {
+        try {
+          // Map AI format to database format with proper projectId
+          const dbActivity = {
+            projectId: projectId, // Critical: set the projectId
+            activityId: activity.activityId || `ACT-${crypto.randomUUID().slice(0, 8)}`,
+            name: activity.activityName || activity.name || "Unnamed Activity",
+            type: activity.type || "Task",
+            originalDuration: activity.duration || activity.originalDuration || 1,
+            earlyStart: activity.earlyStart,
+            earlyFinish: activity.earlyFinish,
+            lateStart: activity.lateStart,
+            lateFinish: activity.lateFinish,
+            totalFloat: activity.totalFloat,
+            freeFloat: activity.freeFloat,
+            isCritical: activity.isCritical || false,
+            percentComplete: activity.percentComplete || 0,
+            status: activity.status === "Not Started" ? "NotStarted" :
+                   activity.status === "In Progress" ? "InProgress" :
+                   activity.status === "Completed" ? "Completed" : "NotStarted",
+            durationUnit: "days"
+          };
+          
+          await storage.createActivity(dbActivity);
+          savedCount++;
+        } catch (activityError: any) {
+          console.error(`Failed to save activity ${activity.activityId}:`, activityError.message);
+        }
+      }
+      
+      console.log(`Successfully saved ${savedCount} of ${activities.length} activities`);
+      res.json({ 
+        success: true, 
+        activitiesCount: savedCount,
+        message: `Saved ${savedCount} activities to project`
+      });
+      
+    } catch (error: any) {
+      console.error("Error bulk saving activities:", error);
+      res.status(500).json({ error: "Failed to bulk save activities", details: error.message });
+    }
+  });
+
   // Relationships
   app.get("/api/projects/:projectId/relationships", async (req, res) => {
     try {
@@ -977,8 +1029,8 @@ Return ONLY the enhanced prompt text, nothing else.`;
               // Database storage expects just the activity id
               await storage.deleteActivity(activity.id);
             } else {
-              // Memory storage expects projectId and activity id
-              await storage.deleteActivity(projectId, activity.id);
+              // Memory storage expects activity id
+              await storage.deleteActivity(activity.id);
             }
           }
           
@@ -994,23 +1046,29 @@ Return ONLY the enhanced prompt text, nothing else.`;
                 ...activity,
                 projectId: projectId, // Ensure projectId is set
                 activityId: activity.activityId || `ACT-${crypto.randomUUID().slice(0, 8)}`,
-                name: activity.name || "Unnamed Activity",
-                type: activity.type || "Task",
+                name: activity.activityName || "Unnamed Activity",
+                type: (activity as any).type || "Task",
                 durationUnit: "days",
                 actualStart: null,
                 actualFinish: null,
                 constraintType: null,
                 constraintDate: null,
                 percentComplete: activity.percentComplete || 0,
-                status: activity.status || "NotStarted",
+                status: activity.status === "Not Started" ? "NotStarted" :
+                       activity.status === "In Progress" ? "InProgress" :
+                       activity.status === "Completed" ? "Completed" : "NotStarted",
                 responsibility: null,
                 trade: null
               };
               
               createdActivity = await storage.createActivity(dbActivity);
             } else {
-              // Memory storage expects projectId as separate parameter
-              createdActivity = await storage.createActivity(projectId, activity);
+              // Memory storage expects activity with projectId and name
+              createdActivity = await storage.createActivity({
+                ...activity, 
+                projectId,
+                name: activity.activityName || "Unnamed Activity"
+              });
             }
             
             // Store the mapping of activityId to database id
