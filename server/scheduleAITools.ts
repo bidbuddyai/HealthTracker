@@ -276,9 +276,9 @@ Provide:
         max_tokens: 8000
       });
       
-      // Set 4 minute timeout for complex schedule generation with document processing
+      // Set 90 second timeout for complex schedule generation
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('POE API timeout after 4 minutes - this may indicate a complex document processing task')), 240000);
+        setTimeout(() => reject(new Error('POE API timeout after 90 seconds')), 90000);
       });
       
       response = await Promise.race([apiCall, timeoutPromise]);
@@ -377,205 +377,27 @@ Provide:
     
     let content = response.choices[0].message.content || "{}";
     console.log("Content length:", content?.length);
-    console.log("Content preview:", content?.substring(0, 500));
+    console.log("Content preview:", content?.substring(0, 200));
     
-    // Enhanced parsing for reasoning models that return thinking text + JSON
-    const result = parseAIScheduleResponse(content);
+    // Remove any thinking prefix or non-JSON content before the actual JSON
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      content = jsonMatch[0];
+    }
     
-    if (!result || !result.activities || result.activities.length === 0) {
-      console.warn('AI response parsing yielded no activities, attempting fallback parsing');
-      console.log('Full content for debugging:', content);
-      
-      // Fallback: try to extract any valid JSON objects from the response
-      const fallbackResult = extractFallbackScheduleData(content);
-      if (fallbackResult && fallbackResult.activities && fallbackResult.activities.length > 0) {
-        console.log('Fallback parsing succeeded, found', fallbackResult.activities.length, 'activities');
-        return processScheduleResult(fallbackResult, request);
-      }
-      
-      // If all parsing fails, return empty structure with helpful error message
-      console.error('All parsing attempts failed for AI response');
-      return {
+    let result;
+    try {
+      result = JSON.parse(content);
+    } catch (parseError) {
+      console.error('Failed to parse AI response:', content.substring(0, 200));
+      // Return a default structure if parsing fails
+      result = {
         activities: [],
-        summary: `AI response parsing failed. Response length: ${content.length} chars. This may be due to the AI model returning an unexpected format. Try using a different model like Claude-Sonnet-4 or GPT-4o.`,
-        criticalPath: [],
-        recommendations: ['Try using Claude-Sonnet-4 or GPT-4o for better JSON formatting', 'Check if the selected AI model supports structured output']
+        summary: "Failed to parse AI response",
+        recommendations: []
       };
     }
     
-    return processScheduleResult(result, request);
-  } catch (error) {
-    console.error('Error generating schedule with AI:', error);
-    throw new Error('Failed to generate schedule');
-  }
-}
-
-/**
- * Enhanced parsing function for AI responses that handles reasoning models
- * Reasoning models like Gemini-2.5-Pro, o3-pro return thinking text before JSON
- */
-function parseAIScheduleResponse(content: string): any {
-  try {
-    // First try: direct JSON parsing
-    return JSON.parse(content);
-  } catch (directError) {
-    console.log('Direct JSON parsing failed, trying enhanced parsing for reasoning models');
-  }
-  
-  // Second try: Extract JSON from reasoning model responses
-  // Reasoning models often format like: "*thinking...*" followed by analysis, then ```json ... ```
-  
-  // Look for JSON code blocks (common in reasoning models)
-  const jsonCodeBlockMatch = content.match(/```json\s*([\s\S]*?)\s*```/i);
-  if (jsonCodeBlockMatch) {
-    try {
-      console.log('Found JSON code block, attempting to parse');
-      return JSON.parse(jsonCodeBlockMatch[1]);
-    } catch (codeBlockError) {
-      console.log('JSON code block parsing failed:', codeBlockError.message);
-    }
-  }
-  
-  // Look for JSON blocks without code formatting
-  const jsonBlockMatch = content.match(/```\s*(\{[\s\S]*?\})\s*```/);
-  if (jsonBlockMatch) {
-    try {
-      console.log('Found unformatted JSON block, attempting to parse');
-      return JSON.parse(jsonBlockMatch[1]);
-    } catch (blockError) {
-      console.log('Unformatted JSON block parsing failed:', blockError.message);
-    }
-  }
-  
-  // Look for the largest JSON object in the response
-  const allJsonMatches = content.match(/\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g);
-  if (allJsonMatches) {
-    // Sort by length descending to get the most comprehensive JSON
-    const sortedMatches = allJsonMatches.sort((a, b) => b.length - a.length);
-    
-    for (const jsonCandidate of sortedMatches) {
-      try {
-        const parsed = JSON.parse(jsonCandidate);
-        if (parsed && typeof parsed === 'object' && (parsed.activities || parsed.schedule)) {
-          console.log('Successfully parsed JSON from reasoning model response');
-          return parsed;
-        }
-      } catch (candidateError) {
-        continue; // Try next candidate
-      }
-    }
-  }
-  
-  // Last resort: look for activity array patterns even if not properly formatted JSON
-  const activityPattern = /"activityId":\s*"[^"]+"/g;
-  const activityMatches = content.match(activityPattern);
-  if (activityMatches && activityMatches.length > 0) {
-    console.log(`Found ${activityMatches.length} potential activities, attempting reconstruction`);
-    return reconstructFromPatterns(content);
-  }
-  
-  return null;
-}
-
-/**
- * Fallback extraction when standard parsing fails
- */
-function extractFallbackScheduleData(content: string): any {
-  console.log('Attempting fallback schedule data extraction');
-  
-  // Try to extract structured data even from malformed responses
-  const patterns = {
-    activities: [],
-    summary: "Generated from fallback parsing",
-    recommendations: []
-  };
-  
-  // Look for activity-like structures in the text
-  const activityLines = content.split('\n').filter(line => 
-    line.includes('activityId') || 
-    line.includes('Activity') ||
-    line.includes('duration') ||
-    line.includes('predecessors')
-  );
-  
-  if (activityLines.length > 0) {
-    console.log(`Found ${activityLines.length} activity-related lines for reconstruction`);
-    // Simple reconstruction - create basic activities from detected patterns
-    patterns.activities = activityLines.slice(0, 20).map((line, index) => ({
-      activityId: `A${index.toString().padStart(3, '0')}`,
-      name: `Activity ${index + 1}`,
-      originalDuration: 5,
-      remainingDuration: 5,
-      predecessors: index > 0 ? [`A${(index - 1).toString().padStart(3, '0')}`] : [],
-      status: "NotStarted",
-      percentComplete: 0,
-      type: "Task",
-      totalFloat: 0,
-      freeFloat: 0,
-      isCritical: index === 0
-    }));
-  }
-  
-  return patterns.activities.length > 0 ? patterns : null;
-}
-
-/**
- * Reconstruct schedule from detected patterns when JSON is malformed
- */
-function reconstructFromPatterns(content: string): any {
-  const activities = [];
-  const lines = content.split('\n');
-  
-  let currentActivity: any = {};
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    
-    if (line.includes('activityId')) {
-      if (Object.keys(currentActivity).length > 0) {
-        activities.push(currentActivity);
-      }
-      currentActivity = {};
-      
-      const idMatch = line.match(/"activityId":\s*"([^"]+)"/);
-      if (idMatch) {
-        currentActivity.activityId = idMatch[1];
-      }
-    }
-    
-    if (line.includes('"name"') || line.includes('"activityName"')) {
-      const nameMatch = line.match(/"(?:name|activityName)":\s*"([^"]+)"/);
-      if (nameMatch) {
-        currentActivity.name = nameMatch[1];
-      }
-    }
-    
-    if (line.includes('originalDuration')) {
-      const durationMatch = line.match(/"originalDuration":\s*(\d+)/);
-      if (durationMatch) {
-        currentActivity.originalDuration = parseInt(durationMatch[1]);
-      }
-    }
-  }
-  
-  if (Object.keys(currentActivity).length > 0) {
-    activities.push(currentActivity);
-  }
-  
-  console.log(`Reconstructed ${activities.length} activities from patterns`);
-  
-  return {
-    activities,
-    summary: `Reconstructed ${activities.length} activities from malformed AI response`,
-    recommendations: ['AI response was malformed but data was recovered', 'Consider using Claude-Sonnet-4 for better formatting']
-  };
-}
-
-/**
- * Process and transform the parsed result into the expected frontend format
- */
-function processScheduleResult(result: any, request: ScheduleAIRequest): ScheduleAIResponse {
-  try {
     // Transform AI activities to the format expected by frontend
     const activities = (result.activities || []).map((activity: any, index: number) => {
       // Calculate dates properly
