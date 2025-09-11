@@ -149,7 +149,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Activities
-  app.get("/api/projects/:projectId/activities", async (req, res) => {
+  app.get("/api/projects/:projectId/activities", isAuthenticated, async (req, res) => {
     try {
       const activities = await storage.getActivitiesByProject(req.params.projectId);
       res.json(activities);
@@ -159,7 +159,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/activities/:id", async (req, res) => {
+  app.get("/api/activities/:id", isAuthenticated, async (req, res) => {
     try {
       const activity = await storage.getActivity(req.params.id);
       if (!activity) {
@@ -172,7 +172,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/projects/:projectId/activities", async (req, res) => {
+  app.post("/api/projects/:projectId/activities", isAuthenticated, async (req, res) => {
     try {
       // Transform AI format to database format BEFORE validation
       const transformedActivity = {
@@ -213,7 +213,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/activities/:id", async (req, res) => {
+  app.put("/api/activities/:id", isAuthenticated, async (req, res) => {
     try {
       const activity = await storage.updateActivity(req.params.id, req.body);
       if (!activity) {
@@ -226,7 +226,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/activities/:id", async (req, res) => {
+  app.delete("/api/activities/:id", isAuthenticated, async (req, res) => {
     try {
       const success = await storage.deleteActivity(req.params.id);
       if (!success) {
@@ -239,7 +239,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/projects/:projectId/activities/bulk-update", async (req, res) => {
+  app.post("/api/projects/:projectId/activities/bulk-update", isAuthenticated, async (req, res) => {
     try {
       const { updates } = req.body;
       await storage.bulkUpdateActivities(updates);
