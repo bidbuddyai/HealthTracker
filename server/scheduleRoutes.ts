@@ -1,6 +1,5 @@
 import type { Express } from "express";
 import { storage } from "./storage";
-import { DbStorage } from "./dbStorage";
 import { isAuthenticated } from "./replitAuth";
 import { 
   projects,
@@ -11,9 +10,9 @@ import { eq } from "drizzle-orm";
 import { exportSchedule } from "./scheduleExporter";
 
 export function registerScheduleRoutes(app: Express) {
-  // Check if we have database storage
-  const hasDbStorage = storage instanceof DbStorage;
-  const dbStorage = hasDbStorage ? (storage as unknown as DbStorage) : null;
+  // For now, disable database-specific features until we have proper database storage
+  const hasDbStorage = false;
+  const dbStorage = null;
 
   // Import schedule from XER, MPP, PDF, or XML
   app.post("/api/projects/:projectId/schedules/import", async (req, res) => {
