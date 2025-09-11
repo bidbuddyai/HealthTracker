@@ -13,6 +13,7 @@ import { generateScheduleWithAI, identifyScheduleImpacts } from "./scheduleAIToo
 import { poe } from "./poeClient";
 import { SYSTEM_ASSISTANT, ToolSchema } from "./assistantTools";
 import { registerScheduleRoutes } from "./scheduleRoutes";
+import { ObjectStorageService } from "./objectStorage";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
