@@ -7,6 +7,12 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Separator } from "@/components/ui/separator";
 import { Progress } from "@/components/ui/progress";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useState, useEffect } from "react";
@@ -26,7 +32,12 @@ import {
   Target,
   Settings,
   Sparkles,
-  Bot
+  Bot,
+  Download,
+  FileText,
+  FileCode,
+  FileSpreadsheet,
+  FileImage
 } from "lucide-react";
 import ScheduleGrid from "@/components/ScheduleGrid";
 import GanttChart from "@/components/GanttChart";
@@ -104,6 +115,66 @@ export default function ProjectDetail() {
       });
     },
   });
+
+  // Export mutation
+  const exportMutation = useMutation({
+    mutationFn: async (format: 'xer' | 'xml' | 'pdf' | 'csv' | 'json') => {
+      const response = await fetch(`/api/projects/${id}/export/${format}`, {
+        method: 'GET',
+        credentials: 'include',
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ error: 'Export failed' }));
+        throw new Error(errorData.error || 'Export failed');
+      }
+      
+      return { response, format };
+    },
+    onSuccess: async ({ response, format }) => {
+      // Create download link
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const contentDisposition = response.headers.get('content-disposition');
+      const filename = contentDisposition
+        ? contentDisposition.split('filename=')[1]?.replace(/"/g, '')
+        : `${project?.name || 'project'}_export.${format}`;
+      
+      const a = document.createElement('a');
+      a.style.display = 'none';
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+
+      toast({
+        title: "Export Successful",
+        description: `Your ${format.toUpperCase()} file has been downloaded.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Export Failed",
+        description: error.message || "Failed to export project data. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Export handler
+  const handleExport = (format: 'xer' | 'xml' | 'pdf' | 'csv' | 'json') => {
+    if (activities.length === 0) {
+      toast({
+        title: "No Data to Export",
+        description: "Please add some activities to your project before exporting.",
+        variant: "destructive",
+      });
+      return;
+    }
+    exportMutation.mutate(format);
+  };
 
   if (projectLoading || activitiesLoading || relationshipsLoading || wbsLoading || calendarsLoading) {
     return (
@@ -210,6 +281,59 @@ export default function ProjectDetail() {
                 <BarChart3 className="w-4 h-4 mr-2" />
                 {calculateCriticalPathMutation.isPending ? "Calculating..." : "Update CPM"}
               </Button>
+              
+              {/* Export Dropdown */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    disabled={exportMutation.isPending || activities.length === 0}
+                    data-testid="button-export-dropdown"
+                  >
+                    <Download className="w-4 h-4 mr-2" />
+                    {exportMutation.isPending ? "Exporting..." : "Export"}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-48">
+                  <DropdownMenuItem 
+                    onClick={() => handleExport('csv')}
+                    data-testid="button-export-csv"
+                  >
+                    <FileSpreadsheet className="w-4 h-4 mr-2 text-green-600" />
+                    Export as CSV
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => handleExport('json')}
+                    data-testid="button-export-json"
+                  >
+                    <FileCode className="w-4 h-4 mr-2 text-blue-600" />
+                    Export as JSON
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => handleExport('pdf')}
+                    data-testid="button-export-pdf"
+                  >
+                    <FileImage className="w-4 h-4 mr-2 text-red-600" />
+                    Export as PDF
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => handleExport('xml')}
+                    data-testid="button-export-xml"
+                  >
+                    <FileText className="w-4 h-4 mr-2 text-orange-600" />
+                    Export as MS Project XML
+                  </DropdownMenuItem>
+                  <DropdownMenuItem 
+                    onClick={() => handleExport('xer')}
+                    data-testid="button-export-xer"
+                  >
+                    <FileText className="w-4 h-4 mr-2 text-purple-600" />
+                    Export as P6 XER
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
               <Button onClick={handleNewActivity} size="sm" data-testid="button-new-activity">
                 <Circle className="w-4 h-4 mr-2" />
                 New Activity

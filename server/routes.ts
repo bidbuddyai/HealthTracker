@@ -12,6 +12,7 @@ import { z } from "zod";
 import { generateScheduleWithAI, identifyScheduleImpacts } from "./scheduleAITools";
 import { poe } from "./poeClient";
 import { SYSTEM_ASSISTANT, ToolSchema } from "./assistantTools";
+import { registerScheduleRoutes } from "./scheduleRoutes";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
@@ -1327,6 +1328,9 @@ Return ONLY the enhanced prompt text, nothing else.`;
   app.get("/api/health", (req, res) => {
     res.json({ status: "healthy", service: "ScheduleSam API" });
   });
+
+  // Register schedule-related routes (includes export functionality)
+  registerScheduleRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

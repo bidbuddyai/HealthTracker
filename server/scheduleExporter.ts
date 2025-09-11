@@ -1,5 +1,4 @@
-import type { Activity } from "../client/src/components/ScheduleEditor";
-import type { ProjectSchedule, ScheduleActivity } from "@shared/schema";
+import type { ProjectSchedule, ScheduleActivity, Activity } from "@shared/schema";
 
 interface ExportData {
   schedule: ProjectSchedule;
@@ -359,14 +358,114 @@ export class PDFScheduleExporter {
   }
 }
 
+// CSV Exporter
+export class CSVExporter {
+  export(data: ExportData): string {
+    const { activities } = data;
+    
+    // CSV Headers
+    const headers = [
+      'Activity ID',
+      'Activity Name', 
+      'Activity Type',
+      'Start Date',
+      'Finish Date',
+      'Original Duration',
+      'Remaining Duration',
+      'Total Float',
+      'Status',
+      'Predecessors',
+      'WBS'
+    ];
+    
+    let csv = headers.join(',') + '\n';
+    
+    // CSV Rows
+    activities.forEach(act => {
+      const row = [
+        this.escapeCsv(act.activityId || ''),
+        this.escapeCsv(act.activityName || ''),
+        this.escapeCsv(act.activityType || 'Task'),
+        this.escapeCsv(act.startDate || ''),
+        this.escapeCsv(act.finishDate || ''),
+        (act.originalDuration || 0).toString(),
+        (act.remainingDuration || 0).toString(),
+        (act.totalFloat || 0).toString(),
+        this.escapeCsv(act.status || 'Not Started'),
+        this.escapeCsv(act.predecessors || ''),
+        this.escapeCsv(act.notes || '')
+      ];
+      csv += row.join(',') + '\n';
+    });
+    
+    return csv;
+  }
+  
+  private escapeCsv(text: string): string {
+    // Escape CSV special characters
+    if (text.includes(',') || text.includes('"') || text.includes('\n')) {
+      return '"' + text.replace(/"/g, '""') + '"';
+    }
+    return text;
+  }
+}
+
+// JSON Exporter
+export class JSONExporter {
+  export(data: ExportData): string {
+    const { schedule, activities, projectName } = data;
+    
+    const exportObject = {
+      project: {
+        name: projectName || 'Project',
+        scheduleId: schedule.id,
+        scheduleType: schedule.scheduleType,
+        dataDate: schedule.dataDate,
+        startDate: schedule.startDate,
+        finishDate: schedule.finishDate,
+        version: schedule.version,
+        notes: schedule.notes
+      },
+      statistics: {
+        totalActivities: activities.length,
+        completedActivities: activities.filter(a => a.status === 'Completed').length,
+        inProgressActivities: activities.filter(a => a.status === 'In Progress').length,
+        notStartedActivities: activities.filter(a => a.status === 'Not Started').length,
+        criticalActivities: activities.filter(a => (a.totalFloat || 0) === 0).length
+      },
+      activities: activities.map(act => ({
+        activityId: act.activityId,
+        activityName: act.activityName,
+        activityType: act.activityType,
+        originalDuration: act.originalDuration,
+        remainingDuration: act.remainingDuration,
+        startDate: act.startDate,
+        finishDate: act.finishDate,
+        totalFloat: act.totalFloat,
+        status: act.status,
+        predecessors: act.predecessors ? act.predecessors.split(',').map(p => p.trim()).filter(p => p) : [],
+        successors: act.successors ? act.successors.split(',').map(s => s.trim()).filter(s => s) : [],
+        notes: act.notes,
+        isCritical: (act.totalFloat || 0) === 0
+      })),
+      exportedAt: new Date().toISOString(),
+      exportedBy: 'ScheduleSam'
+    };
+    
+    return JSON.stringify(exportObject, null, 2);
+  }
+}
+
 // Main export function
 export async function exportSchedule(
-  format: 'xer' | 'xml' | 'pdf',
+  format: 'xer' | 'xml' | 'pdf' | 'csv' | 'json',
   schedule: ProjectSchedule,
   activities: ScheduleActivity[],
   projectName?: string
 ): Promise<{ content: string; mimeType: string; filename: string }> {
   const exportData: ExportData = { schedule, activities, projectName };
+  const datePrefix = new Date().toISOString().split('T')[0];
+  const safeProjectName = (projectName || 'project').replace(/[^a-zA-Z0-9_-]/g, '_');
   
   switch (format) {
     case 'xer': {
@@ -374,7 +473,7 @@ export async function exportSchedule(
       return {
         content: exporter.export(exportData),
         mimeType: 'text/plain',
-        filename: `schedule_${schedule.id}.xer`
+        filename: `${safeProjectName}_schedule_${datePrefix}.xer`
       };
     }
     
@@ -383,7 +482,7 @@ export async function exportSchedule(
       return {
         content: exporter.export(exportData),
         mimeType: 'application/xml',
-        filename: `schedule_${schedule.id}.xml`
+        filename: `${safeProjectName}_schedule_${datePrefix}.xml`
       };
     }
     
@@ -392,7 +491,25 @@ export async function exportSchedule(
       return {
         content: exporter.export(exportData),
         mimeType: 'text/html', // Will be converted to PDF on client
-        filename: `schedule_${schedule.id}.pdf`
+        filename: `${safeProjectName}_schedule_${datePrefix}.pdf`
+      };
+    }
+    
+    case 'csv': {
+      const exporter = new CSVExporter();
+      return {
+        content: exporter.export(exportData),
+        mimeType: 'text/csv',
+        filename: `${safeProjectName}_activities_${datePrefix}.csv`
+      };
+    }
+    
+    case 'json': {
+      const exporter = new JSONExporter();
+      return {
+        content: exporter.export(exportData),
+        mimeType: 'application/json',
+        filename: `${safeProjectName}_schedule_${datePrefix}.json`
       };
     }
     

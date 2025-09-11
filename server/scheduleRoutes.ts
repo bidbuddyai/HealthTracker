@@ -1,42 +1,18 @@
 import type { Express } from "express";
-import { poe } from "./poeClient";
 import { storage } from "./storage";
 import { DbStorage } from "./dbStorage";
 import { 
-  insertProjectScheduleSchema, 
-  insertScheduleActivitySchema, 
-  insertScheduleUpdateSchema,
-  projectSchedules,
-  scheduleActivities,
-  scheduleUpdates
+  projects,
+  activities,
+  relationships
 } from "@shared/schema";
-import { eq, desc } from "drizzle-orm";
-import { generateScheduleWithAI, identifyScheduleImpacts } from "./scheduleAITools";
-import { parseScheduleFile } from "./scheduleParser";
+import { eq } from "drizzle-orm";
 import { exportSchedule } from "./scheduleExporter";
-import type { Activity } from "../client/src/components/ScheduleEditor";
 
 export function registerScheduleRoutes(app: Express) {
   // Check if we have database storage
   const hasDbStorage = storage instanceof DbStorage;
   const dbStorage = hasDbStorage ? (storage as unknown as DbStorage) : null;
-
-  // Get project schedules
-  app.get("/api/projects/:projectId/schedules", async (req, res) => {
-    if (!hasDbStorage) {
-      return res.json([]); // Return empty array for in-memory storage
-    }
-    try {
-      const schedules = await dbStorage!.db
-        .select()
-        .from(projectSchedules)
-        .where(eq(projectSchedules.projectId, req.params.projectId))
-        .orderBy(desc(projectSchedules.createdAt));
-      res.json(schedules);
-    } catch (error) {
-      res.status(500).json({ error: "Failed to fetch schedules" });
-    }
-  });
 
   // Import schedule from XER, MPP, PDF, or XML
   app.post("/api/projects/:projectId/schedules/import", async (req, res) => {
@@ -520,48 +496,142 @@ Format as JSON with:
     }
   });
   
-  // Export schedule in various formats
-  app.get("/api/schedules/:scheduleId/export/:format", async (req, res) => {
-    if (!hasDbStorage) {
-      return res.status(501).json({ error: "Schedule export requires database storage" });
-    }
+  // Export project activities in various formats (correct route pattern)
+  app.get("/api/projects/:projectId/export/:format", async (req, res) => {
     try {
-      const { scheduleId, format } = req.params;
+      const { projectId, format } = req.params;
       
       // Validate format
-      if (!['xer', 'xml', 'pdf'].includes(format)) {
-        return res.status(400).json({ error: "Invalid export format. Use xer, xml, or pdf" });
+      if (!['xer', 'xml', 'pdf', 'csv', 'json'].includes(format)) {
+        return res.status(400).json({ error: "Invalid export format. Supported formats: xer, xml, pdf, csv, json" });
       }
       
-      // Get schedule and activities
-      const schedules = await dbStorage!.db
-        .select()
-        .from(projectSchedules)
-        .where(eq(projectSchedules.id, scheduleId));
+      let projectName = 'Project';
+      let activities: any[] = [];
       
-      if (schedules.length === 0) {
-        return res.status(404).json({ error: "Schedule not found" });
+      if (hasDbStorage) {
+        // Database storage approach
+        
+        // Get project name
+        const projects = await dbStorage!.db
+          .select()
+          .from(dbStorage!.schema.projects)
+          .where(eq(dbStorage!.schema.projects.id, projectId));
+        
+        if (projects.length === 0) {
+          return res.status(404).json({ error: "Project not found" });
+        }
+        
+        projectName = projects[0]?.name || 'Project';
+        
+        // Get activities directly from project
+        const projectActivities = await dbStorage!.db
+          .select()
+          .from(dbStorage!.schema.activities)
+          .where(eq(dbStorage!.schema.activities.projectId, projectId));
+        
+        // Map to ScheduleActivity format
+        activities = projectActivities.map(act => ({
+          id: act.id,
+          scheduleId: 'direct-export',
+          activityId: act.activityId,
+          activityName: act.name,
+          activityType: act.type,
+          originalDuration: act.originalDuration,
+          remainingDuration: act.remainingDuration,
+          startDate: act.earlyStart,
+          finishDate: act.earlyFinish,
+          totalFloat: act.totalFloat,
+          status: act.status,
+          predecessors: '', // Will be calculated from relationships
+          successors: '', // Will be calculated from relationships  
+          notes: act.notes
+        }));
+        
+        // Get relationships to populate predecessors/successors
+        const relationships = await dbStorage!.db
+          .select()
+          .from(dbStorage!.schema.relationships)
+          .where(eq(dbStorage!.schema.relationships.projectId, projectId));
+        
+        // Build predecessor/successor maps
+        const predMap = new Map<string, string[]>();
+        const succMap = new Map<string, string[]>();
+        
+        relationships.forEach(rel => {
+          const predAct = projectActivities.find(a => a.id === rel.predecessorActivityId);
+          const succAct = projectActivities.find(a => a.id === rel.successorActivityId);
+          
+          if (predAct && succAct) {
+            const predId = predAct.activityId;
+            const succId = succAct.activityId;
+            
+            if (!predMap.has(succId)) predMap.set(succId, []);
+            if (!succMap.has(predId)) succMap.set(predId, []);
+            
+            predMap.get(succId)!.push(predId);
+            succMap.get(predId)!.push(succId);
+          }
+        });
+        
+        // Update activities with predecessor/successor info
+        activities.forEach(act => {
+          act.predecessors = (predMap.get(act.activityId) || []).join(',');
+          act.successors = (succMap.get(act.activityId) || []).join(',');
+        });
+        
+      } else {
+        // MemStorage fallback approach
+        const project = await storage.getProject(projectId);
+        if (!project) {
+          return res.status(404).json({ error: "Project not found" });
+        }
+        
+        projectName = project.name;
+        const projectActivities = await storage.getActivitiesByProject(projectId);
+        
+        // Map to ScheduleActivity format
+        activities = projectActivities.map(act => ({
+          id: act.id,
+          scheduleId: 'mem-export',
+          activityId: act.activityId,
+          activityName: act.name,
+          activityType: act.type,
+          originalDuration: act.originalDuration,
+          remainingDuration: act.remainingDuration,
+          startDate: act.earlyStart,
+          finishDate: act.earlyFinish,
+          totalFloat: act.totalFloat,
+          status: act.status,
+          predecessors: '', // Could be enhanced by querying relationships
+          successors: '',
+          notes: act.notes
+        }));
       }
       
-      const schedule = schedules[0];
-      const activities = await dbStorage!.db
-        .select()
-        .from(scheduleActivities)
-        .where(eq(scheduleActivities.scheduleId, scheduleId))
-        .orderBy(scheduleActivities.startDate);
-      
-      // Get project name
-      const projects = dbStorage ? await dbStorage.db
-        .select()
-        .from(dbStorage.schema.projects)
-        .where(eq(dbStorage.schema.projects.id, schedule.projectId)) : [];
-      
-      const projectName = projects && projects[0]?.name || 'Project';
+      // Create a mock schedule object for export
+      const mockSchedule = {
+        id: `export-${projectId}`,
+        projectId,
+        scheduleType: 'CPM',
+        dataDate: new Date().toISOString().split('T')[0],
+        startDate: activities.length > 0 ? activities.reduce((earliest, act) => 
+          (!earliest || (act.startDate && act.startDate < earliest)) ? act.startDate : earliest, 
+        null) || new Date().toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        finishDate: activities.length > 0 ? activities.reduce((latest, act) => 
+          (!latest || (act.finishDate && act.finishDate > latest)) ? act.finishDate : latest,
+        null) || new Date().toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        version: 1,
+        notes: `Exported from ${projectName}`,
+        fileUrl: null,
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
       
       // Export schedule
       const exportResult = await exportSchedule(
-        format as 'xer' | 'xml' | 'pdf',
-        schedule,
+        format as 'xer' | 'xml' | 'pdf' | 'csv' | 'json',
+        mockSchedule,
         activities,
         projectName
       );
@@ -573,8 +643,8 @@ Format as JSON with:
       // Send file content
       res.send(exportResult.content);
     } catch (error) {
-      console.error("Error exporting schedule:", error);
-      res.status(500).json({ error: "Failed to export schedule" });
+      console.error("Error exporting project:", error);
+      res.status(500).json({ error: "Failed to export project" });
     }
   });
 }
