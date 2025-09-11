@@ -3,6 +3,7 @@ import OpenAI from "openai";
 export const poe = new OpenAI({
   apiKey: process.env.POE_API_KEY || process.env.OPENAI_API_KEY || "dummy-key",
   baseURL: "https://api.poe.com/v1",
+  timeout: 120000, // 120 seconds timeout for OpenAI client
 });
 
 export async function streamLLM(messages: {role:"system"|"user"|"assistant"; content:string}[], model="Claude-Sonnet-4") {

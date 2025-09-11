@@ -221,6 +221,11 @@ export class DbStorage implements IStorage {
 
   async deleteActivity(id: string): Promise<boolean> {
     try {
+      // First delete all relationships where this activity is involved (predecessor or successor)
+      await db.delete(relationships).where(eq(relationships.predecessorId, id));
+      await db.delete(relationships).where(eq(relationships.successorId, id));
+      
+      // Then delete the activity itself
       const result = await db.delete(activities).where(eq(activities.id, id));
       return result.rowCount > 0;
     } catch (error) {

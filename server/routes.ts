@@ -1043,8 +1043,10 @@ Return ONLY the enhanced prompt text, nothing else.`;
             let createdActivity: any;
             if ('db' in storage) {
               // AI now generates correct format, just add projectId and any missing fields
+              // Destructure to separate status from other fields to avoid conflicts
+              const { status: aiStatus, ...activityWithoutStatus } = activity;
               const dbActivity = {
-                ...activity,
+                ...activityWithoutStatus,
                 projectId: projectId, // Ensure projectId is set
                 activityId: activity.activityId || `ACT-${crypto.randomUUID().slice(0, 8)}`,
                 name: activity.activityName || "Unnamed Activity",
@@ -1055,9 +1057,10 @@ Return ONLY the enhanced prompt text, nothing else.`;
                 constraintType: null,
                 constraintDate: null,
                 percentComplete: activity.percentComplete || 0,
-                status: activity.status === "Not Started" ? "NotStarted" :
-                       activity.status === "In Progress" ? "InProgress" :
-                       activity.status === "Completed" ? "Completed" : "NotStarted",
+                // Properly convert AI status to database enum
+                status: aiStatus === "Not Started" ? "NotStarted" :
+                       aiStatus === "In Progress" ? "InProgress" :
+                       aiStatus === "Completed" ? "Completed" : "NotStarted",
                 responsibility: null,
                 trade: null
               };
@@ -1068,7 +1071,10 @@ Return ONLY the enhanced prompt text, nothing else.`;
               createdActivity = await storage.createActivity({
                 ...activity, 
                 projectId,
-                name: activity.activityName || "Unnamed Activity"
+                name: activity.activityName || "Unnamed Activity",
+                status: activity.status === "Not Started" ? "NotStarted" :
+                       activity.status === "In Progress" ? "InProgress" :
+                       activity.status === "Completed" ? "Completed" : "NotStarted"
               });
             }
             
