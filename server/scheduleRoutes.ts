@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { storage } from "./storage";
 import { DbStorage } from "./dbStorage";
+import { isAuthenticated } from "./replitAuth";
 import { 
   projects,
   activities,
@@ -497,7 +498,7 @@ Format as JSON with:
   });
   
   // Export project activities in various formats (correct route pattern)
-  app.get("/api/projects/:projectId/export/:format", async (req, res) => {
+  app.get("/api/projects/:projectId/export/:format", isAuthenticated, async (req, res) => {
     try {
       const { projectId, format } = req.params;
       
@@ -590,6 +591,29 @@ Format as JSON with:
         projectName = project.name;
         const projectActivities = await storage.getActivitiesByProject(projectId);
         
+        // Get relationships for memory storage
+        const projectRelationships = await storage.getRelationshipsByProject(projectId);
+        
+        // Build predecessor/successor maps for memory storage
+        const memPredMap = new Map<string, string[]>();
+        const memSuccMap = new Map<string, string[]>();
+        
+        projectRelationships.forEach(rel => {
+          const predAct = projectActivities.find(a => a.id === rel.predecessorId);
+          const succAct = projectActivities.find(a => a.id === rel.successorId);
+          
+          if (predAct && succAct) {
+            const predId = predAct.activityId;
+            const succId = succAct.activityId;
+            
+            if (!memPredMap.has(succId)) memPredMap.set(succId, []);
+            if (!memSuccMap.has(predId)) memSuccMap.set(predId, []);
+            
+            memPredMap.get(succId)!.push(predId);
+            memSuccMap.get(predId)!.push(succId);
+          }
+        });
+        
         // Map to ScheduleActivity format
         activities = projectActivities.map(act => ({
           id: act.id,
@@ -603,8 +627,8 @@ Format as JSON with:
           finishDate: act.earlyFinish,
           totalFloat: act.totalFloat,
           status: act.status,
-          predecessors: '', // Could be enhanced by querying relationships
-          successors: '',
+          predecessors: (memPredMap.get(act.activityId) || []).join(','),
+          successors: (memSuccMap.get(act.activityId) || []).join(','),
           notes: act.notes
         }));
       }

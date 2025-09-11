@@ -465,3 +465,32 @@ export type ProjectMember = typeof projectMembers.$inferSelect;
 export type InsertProjectMember = z.infer<typeof insertProjectMemberSchema>;
 export type ScheduleVersion = typeof scheduleVersions.$inferSelect;
 export type InsertScheduleVersion = z.infer<typeof insertScheduleVersionSchema>;
+
+// Export-specific types for schedule export functionality
+export interface ProjectSchedule {
+  id: string;
+  projectId: string;
+  scheduleType: string;
+  dataDate: string;
+  startDate: string;
+  finishDate: string;
+  version: number;
+  notes?: string | null;
+}
+
+export interface ScheduleActivity {
+  id: string;
+  scheduleId: string;
+  activityId: string;
+  activityName: string;
+  activityType?: string;
+  originalDuration?: number | null;
+  remainingDuration?: number | null;
+  startDate?: string | null;
+  finishDate?: string | null;
+  totalFloat?: number | null;
+  status?: string | null;
+  predecessors?: string | null;
+  successors?: string | null;
+  notes?: string | null;
+}
