@@ -1311,34 +1311,65 @@ Return ONLY the enhanced prompt text, nothing else.`;
     ]);
   });
 
-  // Object upload endpoint
+  // Generate presigned upload URL for object storage
   app.post("/api/objects/upload", isAuthenticated, async (req, res) => {
     try {
-      const fileName = req.query.fileName as string || 'uploaded_file';
       const userId = (req as any).user?.claims?.sub;
       
       if (!userId) {
         return res.status(401).json({ error: "User not authenticated" });
       }
 
-      // Generate a unique filename with timestamp
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const sanitizedFileName = fileName.replace(/[^a-zA-Z0-9.-]/g, '_');
-      const uniqueFileName = `${timestamp}_${sanitizedFileName}`;
-      
-      // Create upload URL for object storage
+      // Generate presigned upload URL using ObjectStorageService
       const objectStorage = new ObjectStorageService();
-      // For now, return a simple upload endpoint since generatePresignedUploadUrl doesn't exist
-      const uploadUrl = `/api/objects/upload/${uniqueFileName}`;
+      const uploadUrl = await objectStorage.getObjectEntityUploadURL();
       
       res.json({
         method: "PUT",
-        url: uploadUrl,
-        fileName: uniqueFileName
+        url: uploadUrl
       });
     } catch (error) {
       console.error("Error generating upload URL:", error);
       res.status(500).json({ error: "Failed to generate upload URL" });
+    }
+  });
+
+  // Finalize file upload and create attachment record
+  app.post("/api/objects/finalize", isAuthenticated, async (req, res) => {
+    try {
+      const { uploadUrl, fileName, fileSize, fileType, projectId, description, category } = req.body;
+      const userId = (req as any).user?.claims?.sub;
+      
+      if (!userId || !uploadUrl || !fileName || !projectId) {
+        return res.status(400).json({ 
+          error: "Missing required fields: uploadUrl, fileName, projectId" 
+        });
+      }
+
+      // Extract object path from upload URL
+      const objectStorage = new ObjectStorageService();
+      const normalizedPath = objectStorage.normalizeObjectEntityPath(uploadUrl);
+      
+      // Create attachment record in database
+      const attachment = await storage.createAttachment({
+        projectId,
+        fileName,
+        fileSize: fileSize || 0,
+        fileType: fileType || 'application/octet-stream',
+        storageUrl: normalizedPath,
+        uploadedBy: userId,
+        description: description || null,
+        category: category || 'Document'
+      });
+      
+      res.json({
+        success: true,
+        attachment,
+        objectPath: normalizedPath
+      });
+    } catch (error) {
+      console.error("Error finalizing upload:", error);
+      res.status(500).json({ error: "Failed to finalize upload" });
     }
   });
 

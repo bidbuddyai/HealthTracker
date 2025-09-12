@@ -550,29 +550,69 @@ The schedule now reflects your requested changes. What else would you like to mo
     );
   };
 
-  const handleFileUpload = (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
+  const handleFileUpload = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
     const successful = result.successful || [];
-    const newFiles = successful.map((file: any) => 
-      file.response?.uploadURL || file.response?.url || ''
-    ).filter(Boolean);
     
-    setUploadedFiles(prev => [...prev, ...newFiles]);
-    
-    // Automatically analyze uploaded documents
-    if (newFiles.length > 0) {
-      setIsAnalyzingDocs(true);
-      analyzeDocumentsMutation.mutate(newFiles, {
-        onSettled: () => setIsAnalyzingDocs(false)
+    try {
+      // Process each uploaded file
+      const objectPaths: string[] = [];
+      
+      for (const file of successful) {
+        const uploadURL = file.response?.uploadURL || file.uploadURL;
+        
+        if (uploadURL && file.name && file.size) {
+          // Finalize the upload and create attachment record
+          const finalizeResponse = await apiRequest("POST", "/api/objects/finalize", {
+            uploadUrl: uploadURL,
+            fileName: file.name,
+            fileSize: file.size,
+            fileType: file.type || 'application/octet-stream',
+            projectId: projectId,
+            category: 'Document',
+            description: 'AI Schedule Generation Document'
+          });
+          
+          if (finalizeResponse.ok) {
+            const data = await finalizeResponse.json();
+            objectPaths.push(data.objectPath);
+          } else {
+            console.error('Failed to finalize upload for file:', file.name);
+            toast({
+              title: "Upload Error",
+              description: `Failed to save ${file.name} to database`,
+              variant: "destructive"
+            });
+          }
+        }
+      }
+      
+      // Update uploaded files list with successful paths
+      if (objectPaths.length > 0) {
+        setUploadedFiles(prev => [...prev, ...objectPaths]);
+        
+        // Automatically analyze uploaded documents
+        setIsAnalyzingDocs(true);
+        analyzeDocumentsMutation.mutate(objectPaths, {
+          onSettled: () => setIsAnalyzingDocs(false)
+        });
+      }
+      
+      // Add system message about file upload
+      const fileMessage: ChatMessage = {
+        role: "system",
+        content: `📎 Uploaded ${objectPaths.length} file(s) successfully. ${objectPaths.length > 0 ? 'Analyzing content for intelligent processing...' : 'Some files failed to upload properly.'}`,
+        timestamp: new Date()
+      };
+      setChatHistory(prev => [...prev, fileMessage]);
+      
+    } catch (error) {
+      console.error('Error processing uploaded files:', error);
+      toast({
+        title: "Upload Error",
+        description: "Failed to process uploaded files",
+        variant: "destructive"
       });
     }
-    
-    // Add system message about file upload
-    const fileMessage: ChatMessage = {
-      role: "system",
-      content: `📎 Uploaded ${successful.length} file(s). ${newFiles.length > 0 ? 'Analyzing content for intelligent processing...' : 'Files will be processed with basic analysis.'}`,
-      timestamp: new Date()
-    };
-    setChatHistory(prev => [...prev, fileMessage]);
   };
   
   // Handle processing mode changes
@@ -1391,10 +1431,14 @@ The schedule now reflects your requested changes. What else would you like to mo
                     
                     <ObjectUploader
                       onComplete={handleFileUpload}
-                      onGetUploadParameters={async () => ({
-                        method: "PUT",
-                        url: `/api/objects/upload/${projectId}/schedule-docs`
-                      })}
+                      onGetUploadParameters={async () => {
+                        const response = await apiRequest("POST", "/api/objects/upload", {});
+                        const data = await response.json();
+                        return {
+                          method: data.method,
+                          url: data.url
+                        };
+                      }}
                       maxNumberOfFiles={10}
                     >
                       Upload Documents
