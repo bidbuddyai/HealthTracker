@@ -117,6 +117,13 @@ export class MSProjectXMLExporter {
     const { schedule, activities, projectName } = data;
     const projectGUID = this.generateGUID();
     
+    console.log('🏗️ MSProjectXMLExporter Debug - Starting export with:', {
+      activitiesCount: activities.length,
+      projectName,
+      scheduleId: schedule.id,
+      sampleActivity: activities[0] || null
+    });
+    
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
     xml += '<Project xmlns="http://schemas.microsoft.com/project">\n';
     
@@ -293,7 +300,14 @@ export class MSProjectXMLExporter {
     xml += '    </Task>\n';
     
     // Individual activity tasks
+    console.log('🔄 MSProjectXMLExporter Debug - Processing activities:', activities.length);
     activities.forEach((act, index) => {
+      console.log(`📝 Processing activity ${index + 1}/${activities.length}:`, {
+        activityId: act.activityId,
+        activityName: act.activityName,
+        originalDuration: act.originalDuration,
+        startDate: act.startDate
+      });
       const uid = index + 1;
       const durationDays = act.originalDuration || 1;
       const durationHours = durationDays * 8; // 8 hours per working day
@@ -411,10 +425,19 @@ export class MSProjectXMLExporter {
       }
       
       xml += '    </Task>\n';
+      console.log(`✅ Generated XML for activity ${act.activityId} (${index + 1}/${activities.length})`);
     });
+    
+    console.log('🎯 MSProjectXMLExporter Debug - Completed processing all activities');
     
     xml += '  </Tasks>\n';
     xml += '</Project>\n';
+    
+    console.log('📊 MSProjectXMLExporter Debug - Final XML stats:', {
+      totalXmlLength: xml.length,
+      taskSections: (xml.match(/<Task>/g) || []).length,
+      projectSections: (xml.match(/<Project>/g) || []).length
+    });
     
     return xml;
   }

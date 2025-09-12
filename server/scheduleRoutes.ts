@@ -2,354 +2,50 @@ import type { Express } from "express";
 import { storage } from "./storage";
 import { isAuthenticated } from "./replitAuth";
 import { 
-  projects,
-  activities,
-  relationships
+  activities, relationships, projects,
+  insertActivitySchema, insertRelationshipSchema,
+  type Activity, type Relationship, type Project
 } from "@shared/schema";
-import { eq } from "drizzle-orm";
-import { exportSchedule } from "./scheduleExporter";
+import { exportSchedule, type ProjectSchedule, type ScheduleActivity } from "./scheduleExporter";
+import { generateScheduleWithAI } from "./scheduleAITools";
+import { poe } from "./poeClient";
+
+// Export interface for schedule activities used by the AI and parsers
+export interface ScheduleActivityData {
+  id: string;
+  activityId: string;
+  activityName: string;
+  activityType?: string;
+  duration: number;
+  predecessors: string[];
+  successors: string[];
+  status: string;
+  percentComplete?: number;
+  startDate?: string;
+  finishDate?: string;
+  wbs?: string;
+  resources?: string[];
+  totalFloat?: number;
+  freeFloat?: number;
+  isCritical?: boolean;
+}
+
+// Interface for parsed schedule data from external files
+export interface ParsedScheduleData {
+  activities: ScheduleActivityData[];
+  projectInfo: {
+    name?: string;
+    startDate?: string;
+    finishDate?: string;
+    dataDate?: string;
+    calendarName?: string;
+  };
+  summary: string;
+}
 
 export function registerScheduleRoutes(app: Express) {
-  // For now, disable database-specific features until we have proper database storage
-  const hasDbStorage = false;
-  const dbStorage = null;
-
-  // Import schedule from XER, MPP, PDF, or XML
-  app.post("/api/projects/:projectId/schedules/import", async (req, res) => {
-    if (!hasDbStorage) {
-      return res.status(501).json({ error: "Schedule import requires database storage" });
-    }
-    try {
-      const { fileContent, filename } = req.body;
-      
-      // Parse the schedule file
-      const parsedData = await parseScheduleFile(fileContent, filename);
-      
-      if (parsedData.activities.length === 0) {
-        return res.status(400).json({ error: "No activities found in the file" });
-      }
-      
-      // Create schedule record
-      const schedule = await dbStorage!.db.insert(projectSchedules).values({
-        projectId: req.params.projectId,
-        scheduleType: "CPM",
-        dataDate: parsedData.projectInfo.dataDate || new Date().toISOString().split('T')[0],
-        startDate: parsedData.projectInfo.startDate || parsedData.activities[0]?.startDate || "",
-        finishDate: parsedData.projectInfo.finishDate || parsedData.activities[parsedData.activities.length - 1]?.finishDate || "",
-        fileUrl: filename,
-        version: 1,
-        notes: parsedData.summary
-      }).returning();
-      
-      // Store activities
-      const activityRecords = parsedData.activities.map((act: Activity) => ({
-        scheduleId: schedule[0].id,
-        activityId: act.activityId,
-        activityName: act.activityName,
-        activityType: "Task",
-        originalDuration: act.duration,
-        remainingDuration: act.duration * (1 - (act.percentComplete || 0) / 100),
-        startDate: act.startDate || "",
-        finishDate: act.finishDate || "",
-        totalFloat: act.totalFloat || 0,
-        status: act.status,
-        predecessors: Array.isArray(act.predecessors) ? act.predecessors.join(',') : '',
-        successors: Array.isArray(act.successors) ? act.successors.join(',') : '',
-        notes: act.wbs || null
-      }));
-      
-      if (activityRecords.length > 0) {
-        await dbStorage!.db.insert(scheduleActivities).values(activityRecords);
-      }
-      
-      res.json({
-        success: true,
-        schedule: schedule[0],
-        activitiesCount: parsedData.activities.length,
-        projectInfo: parsedData.projectInfo,
-        summary: parsedData.summary
-      });
-    } catch (error) {
-      console.error("Error importing schedule:", error);
-      res.status(500).json({ error: "Failed to import schedule file" });
-    }
-  });
-  
-  // Upload and process schedule file (legacy route for backward compatibility)
-  app.post("/api/projects/:projectId/schedules/upload", async (req, res) => {
-    if (!hasDbStorage) {
-      return res.status(501).json({ error: "Schedule upload requires database storage" });
-    }
-    try {
-      const { scheduleType, fileUrl, fileContent, dataDate } = req.body;
-      
-      // Parse the schedule content using AI
-      const parsePrompt = `Parse this construction schedule and extract activities. For each activity, extract:
-- Activity ID
-- Activity Name  
-- Activity Type (Milestone, Task, etc)
-- Duration (original and remaining)
-- Start and Finish dates
-- Predecessors and Successors
-- Total Float
-- Status
-
-Format as JSON array with these fields. Here's the schedule content:
-${fileContent}`;
-
-      const parseResponse = await poe.chat.completions.create({
-        model: "Claude-Sonnet-4",
-        messages: [
-          { role: "system", content: "You are a construction schedule parser. Extract structured data from schedule files." },
-          { role: "user", content: parsePrompt }
-        ]
-      });
-
-      let activities = [];
-      try {
-        const content = parseResponse.choices[0].message.content || "[]";
-        activities = JSON.parse(content);
-      } catch {
-        activities = [];
-      }
-
-      // Create schedule record
-      const schedule = await dbStorage!.db.insert(projectSchedules).values({
-        projectId: req.params.projectId,
-        scheduleType: scheduleType || "CPM",
-        dataDate: dataDate || new Date().toISOString().split('T')[0],
-        startDate: activities[0]?.startDate || "",
-        finishDate: activities[activities.length - 1]?.finishDate || "",
-        fileUrl,
-        version: 1,
-        notes: `Uploaded ${scheduleType} schedule`
-      }).returning();
-
-      // Store activities
-      if (activities.length > 0) {
-        const activityRecords = activities.map((act: any) => ({
-          scheduleId: schedule[0].id,
-          activityId: act.activityId || act.id,
-          activityName: act.activityName || act.name,
-          activityType: act.activityType || act.type,
-          originalDuration: parseInt(act.originalDuration) || 0,
-          remainingDuration: parseInt(act.remainingDuration) || parseInt(act.originalDuration) || 0,
-          startDate: act.startDate,
-          finishDate: act.finishDate,
-          totalFloat: parseInt(act.totalFloat) || 0,
-          status: act.status || "Not Started",
-          predecessors: act.predecessors,
-          successors: act.successors,
-          notes: null
-        }));
-
-        await dbStorage!.db.insert(scheduleActivities).values(activityRecords);
-      }
-
-      res.json({ 
-        success: true, 
-        schedule: schedule[0],
-        activitiesCount: activities.length
-      });
-    } catch (error) {
-      console.error("Error processing schedule:", error);
-      res.status(500).json({ error: "Failed to process schedule" });
-    }
-  });
-
-  // Generate 3-week lookahead from CPM schedule
-  app.post("/api/projects/:projectId/schedules/generate-lookahead", async (req, res) => {
-    if (!hasDbStorage) {
-      return res.status(501).json({ error: "Lookahead generation requires database storage" });
-    }
-    try {
-      const { baseScheduleId, startDate } = req.body;
-      
-      // Get base schedule activities
-      const activities = await dbStorage!.db
-        .select()
-        .from(scheduleActivities)
-        .where(eq(scheduleActivities.scheduleId, baseScheduleId));
-
-      // Calculate 3-week window
-      const start = new Date(startDate || new Date());
-      const end = new Date(start);
-      end.setDate(end.getDate() + 21);
-
-      // Filter activities in 3-week window
-      const lookaheadActivities = activities.filter(act => {
-        const actStart = new Date(act.startDate || "");
-        const actFinish = new Date(act.finishDate || "");
-        return (actStart <= end && actFinish >= start);
-      });
-
-      // Create lookahead schedule
-      const lookahead = await dbStorage!.db.insert(projectSchedules).values({
-        projectId: req.params.projectId,
-        scheduleType: "3_WEEK_LOOKAHEAD",
-        dataDate: start.toISOString().split('T')[0],
-        startDate: start.toISOString().split('T')[0],
-        finishDate: end.toISOString().split('T')[0],
-        version: 1,
-        notes: "Generated from CPM schedule"
-      }).returning();
-
-      // Store lookahead activities
-      if (lookaheadActivities.length > 0) {
-        const lookaheadRecords = lookaheadActivities.map(act => ({
-          scheduleId: lookahead[0].id,
-          activityId: act.activityId,
-          activityName: act.activityName,
-          activityType: act.activityType,
-          originalDuration: act.originalDuration,
-          remainingDuration: act.remainingDuration,
-          startDate: act.startDate,
-          finishDate: act.finishDate,
-          totalFloat: act.totalFloat,
-          status: act.status,
-          predecessors: act.predecessors,
-          successors: act.successors,
-          notes: act.notes
-        }));
-
-        await dbStorage!.db.insert(scheduleActivities).values(lookaheadRecords);
-      }
-
-      res.json({
-        success: true,
-        lookahead: lookahead[0],
-        activitiesCount: lookaheadActivities.length
-      });
-    } catch (error) {
-      res.status(500).json({ error: "Failed to generate lookahead" });
-    }
-  });
-
-  // AI-powered schedule update based on meeting discussion
-  app.post("/api/meetings/:meetingId/update-schedule", async (req, res) => {
-    if (!hasDbStorage) {
-      return res.status(501).json({ error: "Schedule update requires database storage" });
-    }
-    try {
-      const meeting = await storage.getMeeting(req.params.meetingId);
-      if (!meeting) {
-        return res.status(404).json({ error: "Meeting not found" });
-      }
-
-      // Get meeting agenda and action items
-      const [agenda, actions] = await Promise.all([
-        storage.getAgendaItemsByMeeting(meeting.id),
-        storage.getActionItemsByMeeting(meeting.id)
-      ]);
-
-      // Get latest schedule for the project
-      const schedules = await dbStorage!.db
-        .select()
-        .from(projectSchedules)
-        .where(eq(projectSchedules.projectId, meeting.projectId))
-        .orderBy(desc(projectSchedules.createdAt))
-        .limit(1);
-
-      if (schedules.length === 0) {
-        return res.status(404).json({ error: "No schedule found for project" });
-      }
-
-      const schedule = schedules[0];
-      const activities = await dbStorage!.db
-        .select()
-        .from(scheduleActivities)
-        .where(eq(scheduleActivities.scheduleId, schedule.id));
-
-      // Use AI to analyze meeting discussion and suggest schedule updates
-      const scheduleAgenda = agenda.find(a => a.title === "Project Schedule");
-      const updatePrompt = `Based on this meeting discussion, suggest schedule updates:
-
-Meeting #${meeting.seqNum} - ${meeting.date}
-
-Schedule Discussion:
-${scheduleAgenda?.discussion || "No schedule discussion recorded"}
-
-Action Items:
-${actions.map(a => `- ${a.action} (Due: ${a.dueDate || 'TBD'})`).join('\n')}
-
-Current Schedule Activities:
-${activities.slice(0, 10).map(a => `${a.activityId}: ${a.activityName} (${a.status}, ${a.startDate} to ${a.finishDate})`).join('\n')}
-
-Suggest specific updates to activities including:
-- Status changes (Not Started -> In Progress -> Completed)
-- Date adjustments based on delays or accelerations mentioned
-- New dependencies or constraints
-- Activities that need attention
-
-Format as JSON with:
-- updates: [{activityId, field, oldValue, newValue, reason}]
-- recommendations: [text recommendations]`;
-
-      const updateResponse = await poe.chat.completions.create({
-        model: "Claude-Sonnet-4",
-        messages: [
-          { role: "system", content: "You are a construction schedule analyst. Suggest schedule updates based on meeting discussions." },
-          { role: "user", content: updatePrompt }
-        ]
-      });
-
-      let suggestions: { updates: any[], recommendations: string[] } = { updates: [], recommendations: [] };
-      try {
-        const content = updateResponse.choices[0].message.content || "{}";
-        suggestions = JSON.parse(content);
-      } catch {
-        suggestions = { 
-          updates: [], 
-          recommendations: ["Unable to parse AI suggestions"] 
-        };
-      }
-
-      // Apply suggested updates
-      const appliedUpdates: any[] = [];
-      for (const update of (suggestions.updates || []) as any[]) {
-        const activity = activities.find(a => a.activityId === update.activityId);
-        if (activity) {
-          // Update the activity
-          const updateData: any = {};
-          updateData[update.field as string] = update.newValue;
-          
-          await dbStorage!.db
-            .update(scheduleActivities)
-            .set(updateData)
-            .where(eq(scheduleActivities.id, activity.id));
-          
-          appliedUpdates.push(update);
-        }
-      }
-
-      // Record the update
-      if (appliedUpdates.length > 0 && dbStorage) {
-        await dbStorage.db.insert(scheduleUpdates).values({
-          scheduleId: schedule.id,
-          meetingId: meeting.id,
-          updateType: "AI_GENERATED",
-          updateDescription: `Applied ${appliedUpdates.length} updates from Meeting #${meeting.seqNum}`,
-          affectedActivities: JSON.stringify(appliedUpdates.map(u => u.activityId)),
-          oldValues: JSON.stringify(appliedUpdates.map(u => ({ activityId: u.activityId, field: u.field, value: u.oldValue }))),
-          newValues: JSON.stringify(appliedUpdates.map(u => ({ activityId: u.activityId, field: u.field, value: u.newValue }))),
-          createdBy: "AI Assistant"
-        });
-      }
-
-      res.json({
-        success: true,
-        appliedUpdates: appliedUpdates.length,
-        suggestions: suggestions.recommendations,
-        updates: appliedUpdates
-      });
-    } catch (error) {
-      console.error("Error updating schedule:", error);
-      res.status(500).json({ error: "Failed to update schedule" });
-    }
-  });
-
   // AI-powered schedule generation
-  app.post("/api/projects/:projectId/schedules/generate-ai", async (req, res) => {
+  app.post("/api/projects/:projectId/schedules/generate-ai", isAuthenticated, async (req, res) => {
     try {
       const { type, projectDescription, currentActivities, userRequest, startDate, constraints, uploadedFiles, model } = req.body;
       
@@ -368,44 +64,63 @@ Format as JSON with:
       
       console.log('AI generation result:', { activitiesCount: result.activities.length });
       
-      // If creating a new schedule and we have DB storage, save it
-      if (type === 'create' && result.activities.length > 0 && hasDbStorage) {
-        const schedule = await dbStorage!.db.insert(projectSchedules).values({
-          projectId: req.params.projectId,
-          scheduleType: "CPM",
-          dataDate: startDate || new Date().toISOString().split('T')[0],
-          startDate: startDate || new Date().toISOString().split('T')[0],
-          finishDate: "", // Will be calculated
-          version: 1,
-          notes: `AI Generated: ${result.summary}`
-        }).returning();
-        
-        // Store activities
-        const activityRecords = result.activities.map((act: Activity) => ({
-          scheduleId: schedule[0].id,
-          activityId: act.activityId,
-          activityName: act.activityName,
-          activityType: "Task",
-          originalDuration: act.duration,
-          remainingDuration: act.duration,
-          startDate: act.startDate || "",
-          finishDate: act.finishDate || "",
-          totalFloat: act.totalFloat || 0,
-          status: act.status,
-          predecessors: act.predecessors.join(','),
-          successors: act.successors.join(','),
-          notes: act.wbs || null
-        }));
-        
-        await dbStorage!.db.insert(scheduleActivities).values(activityRecords);
+      // Store activities in memory storage
+      if (type === 'create' && result.activities.length > 0) {
+        const project = await storage.getProject(req.params.projectId);
+        if (!project) {
+          return res.status(404).json({ error: "Project not found" });
+        }
+
+        // Create activities using the storage interface
+        for (const act of result.activities) {
+          const activityData = {
+            projectId: req.params.projectId,
+            activityId: act.activityId,
+            name: act.activityName,
+            type: "Task" as const,
+            originalDuration: act.duration,
+            remainingDuration: act.duration,
+            earlyStart: act.startDate || "",
+            earlyFinish: act.finishDate || "",
+            totalFloat: act.totalFloat || 0,
+            status: "NotStarted" as const,
+            notes: act.wbs || null
+          };
+          
+          await storage.createActivity(activityData);
+        }
+
+        // Create relationships
+        for (const act of result.activities) {
+          if (act.predecessors && act.predecessors.length > 0) {
+            const currentActivity = await storage.getActivitiesByProject(req.params.projectId);
+            const thisAct = currentActivity.find(a => a.activityId === act.activityId);
+            
+            if (thisAct) {
+              for (const predId of act.predecessors) {
+                const predActivity = currentActivity.find(a => a.activityId === predId);
+                if (predActivity) {
+                  await storage.createRelationship({
+                    projectId: req.params.projectId,
+                    predecessorId: predActivity.id,
+                    successorId: thisAct.id,
+                    type: "FS",
+                    lag: 0
+                  });
+                }
+              }
+            }
+          }
+        }
         
         res.json({
           success: true,
-          schedule: schedule[0],
+          message: "Schedule created successfully",
+          activitiesCount: result.activities.length,
           ...result
         });
       } else {
-        // Return result without saving to database
+        // Return result without saving to storage
         res.json({
           success: true,
           ...result
@@ -420,83 +135,151 @@ Format as JSON with:
       });
     }
   });
-  
-  // Generate interactive 3-week lookahead
-  app.post("/api/projects/:projectId/schedules/generate-lookahead-ai", async (req, res) => {
-    if (!hasDbStorage) {
-      return res.status(501).json({ error: "Lookahead AI generation requires database storage" });
-    }
+
+  // Generate 3-week lookahead from current activities
+  app.post("/api/projects/:projectId/schedules/generate-lookahead", isAuthenticated, async (req, res) => {
     try {
-      const { currentActivities, startDate } = req.body;
+      const { startDate } = req.body;
       
-      const result = await generateScheduleWithAI({
-        type: 'lookahead',
-        currentActivities,
-        userRequest: 'Generate 3-week lookahead',
-        startDate: startDate || new Date().toISOString().split('T')[0]
+      // Get current activities from storage
+      const currentActivities = await storage.getActivitiesByProject(req.params.projectId);
+      
+      // Calculate 3-week window
+      const start = new Date(startDate || new Date());
+      const end = new Date(start);
+      end.setDate(end.getDate() + 21);
+
+      // Filter activities in 3-week window
+      const lookaheadActivities = currentActivities.filter(act => {
+        const actStart = new Date(act.earlyStart || "");
+        const actFinish = new Date(act.earlyFinish || "");
+        return (actStart <= end && actFinish >= start);
       });
-      
-      // Create lookahead schedule in database
-      const lookahead = await dbStorage!.db.insert(projectSchedules).values({
-        projectId: req.params.projectId,
-        scheduleType: "3_WEEK_LOOKAHEAD",
-        dataDate: startDate || new Date().toISOString().split('T')[0],
-        startDate: startDate || new Date().toISOString().split('T')[0],
-        finishDate: "", // Will be calculated
-        version: 1,
-        notes: `AI Generated Lookahead: ${result.summary}`
-      }).returning();
-      
-      // Store lookahead activities
-      if (result.activities.length > 0) {
-        const activityRecords = result.activities.map((act: Activity) => ({
-          scheduleId: lookahead[0].id,
-          activityId: act.activityId,
-          activityName: act.activityName,
-          activityType: "Task",
-          originalDuration: act.duration,
-          remainingDuration: act.duration,
-          startDate: act.startDate || "",
-          finishDate: act.finishDate || "",
-          totalFloat: act.totalFloat || 0,
-          status: act.status,
-          predecessors: act.predecessors.join(','),
-          successors: act.successors.join(','),
-          notes: act.wbs || null
-        }));
-        
-        await dbStorage!.db.insert(scheduleActivities).values(activityRecords);
-      }
-      
+
       res.json({
         success: true,
-        lookahead: lookahead[0],
-        ...result
+        activities: lookaheadActivities,
+        activitiesCount: lookaheadActivities.length,
+        startDate: start.toISOString().split('T')[0],
+        endDate: end.toISOString().split('T')[0]
       });
     } catch (error) {
-      console.error("Error generating AI lookahead:", error);
+      console.error("Error generating lookahead:", error);
       res.status(500).json({ error: "Failed to generate lookahead" });
     }
   });
-  
-  // Get schedule activities
-  app.get("/api/schedules/:scheduleId/activities", async (req, res) => {
-    if (!hasDbStorage) {
-      return res.json([]); // Return empty array for in-memory storage
-    }
+
+  // Import schedule from XER, MPP, PDF, or XML
+  app.post("/api/projects/:projectId/schedules/import", isAuthenticated, async (req, res) => {
     try {
-      const activities = await dbStorage!.db
-        .select()
-        .from(scheduleActivities)
-        .where(eq(scheduleActivities.scheduleId, req.params.scheduleId))
-        .orderBy(scheduleActivities.startDate);
-      res.json(activities);
+      const { fileContent, filename } = req.body;
+      
+      if (!fileContent || !filename) {
+        return res.status(400).json({ error: "File content and filename are required" });
+      }
+
+      // Use AI to parse the schedule file content
+      const parsePrompt = `Parse this construction schedule file and extract activities. For each activity, extract:
+- Activity ID
+- Activity Name  
+- Activity Type (Milestone, Task, etc)
+- Duration (original and remaining)
+- Start and Finish dates (YYYY-MM-DD format)
+- Predecessors and Successors
+- Total Float
+- Status (Not Started, In Progress, Completed)
+
+Format as JSON with this structure:
+{
+  "activities": [
+    {
+      "activityId": "A001",
+      "activityName": "Activity Name",
+      "duration": 5,
+      "startDate": "2024-01-15",
+      "finishDate": "2024-01-19",
+      "predecessors": ["A000"],
+      "totalFloat": 0,
+      "status": "Not Started"
+    }
+  ],
+  "projectInfo": {
+    "name": "Project Name",
+    "startDate": "2024-01-01",
+    "finishDate": "2024-12-31",
+    "dataDate": "2024-01-01"
+  }
+}
+
+Here's the schedule file content:
+${fileContent}`;
+
+      const parseResponse = await poe.chat.completions.create({
+        model: "Claude-Sonnet-4",
+        messages: [
+          { role: "system", content: "You are a construction schedule parser. Extract structured data from schedule files." },
+          { role: "user", content: parsePrompt }
+        ]
+      });
+
+      let parsedData: ParsedScheduleData = { activities: [], projectInfo: {}, summary: "" };
+      try {
+        const content = parseResponse.choices[0].message.content || "{}";
+        const result = JSON.parse(content);
+        parsedData = {
+          activities: result.activities || [],
+          projectInfo: result.projectInfo || {},
+          summary: `Imported ${result.activities?.length || 0} activities from ${filename}`
+        };
+      } catch (parseError) {
+        console.error("Failed to parse AI response:", parseError);
+        return res.status(400).json({ error: "Failed to parse schedule file content" });
+      }
+
+      if (parsedData.activities.length === 0) {
+        return res.status(400).json({ error: "No activities found in the file" });
+      }
+
+      // Store activities using the storage interface
+      let createdCount = 0;
+      for (const act of parsedData.activities) {
+        try {
+          const activityData = {
+            projectId: req.params.projectId,
+            activityId: act.activityId,
+            name: act.activityName,
+            type: "Task" as const,
+            originalDuration: act.duration,
+            remainingDuration: act.duration * (1 - (act.percentComplete || 0) / 100),
+            earlyStart: act.startDate || "",
+            earlyFinish: act.finishDate || "",
+            totalFloat: act.totalFloat || 0,
+            status: act.status === "Completed" ? "Completed" as const : 
+                    act.status === "In Progress" ? "InProgress" as const : "NotStarted" as const,
+            notes: act.wbs || null
+          };
+          
+          await storage.createActivity(activityData);
+          createdCount++;
+        } catch (error) {
+          console.error(`Failed to create activity ${act.activityId}:`, error);
+        }
+      }
+
+      res.json({
+        success: true,
+        message: `Successfully imported ${createdCount} activities`,
+        activitiesCount: createdCount,
+        projectInfo: parsedData.projectInfo,
+        summary: parsedData.summary
+      });
     } catch (error) {
-      res.status(500).json({ error: "Failed to fetch activities" });
+      console.error("Error importing schedule:", error);
+      res.status(500).json({ error: "Failed to import schedule file" });
     }
   });
-  
-  // Export project activities in various formats (correct route pattern)
+
+  // Export project activities in various formats (CRITICAL ROUTE)
   app.get("/api/projects/:projectId/export/:format", isAuthenticated, async (req, res) => {
     try {
       const { projectId, format } = req.params;
@@ -506,168 +289,182 @@ Format as JSON with:
         return res.status(400).json({ error: "Invalid export format. Supported formats: xer, xml, pdf, csv, json" });
       }
       
-      let projectName = 'Project';
-      let activities: any[] = [];
-      
-      if (hasDbStorage) {
-        // Database storage approach
-        
-        // Get project name
-        const projects = await dbStorage!.db
-          .select()
-          .from(dbStorage!.schema.projects)
-          .where(eq(dbStorage!.schema.projects.id, projectId));
-        
-        if (projects.length === 0) {
-          return res.status(404).json({ error: "Project not found" });
-        }
-        
-        projectName = projects[0]?.name || 'Project';
-        
-        // Get activities directly from project
-        const projectActivities = await dbStorage!.db
-          .select()
-          .from(dbStorage!.schema.activities)
-          .where(eq(dbStorage!.schema.activities.projectId, projectId));
-        
-        // Map to ScheduleActivity format
-        activities = projectActivities.map(act => ({
-          id: act.id,
-          scheduleId: 'direct-export',
-          activityId: act.activityId,
-          activityName: act.name,
-          activityType: act.type,
-          originalDuration: act.originalDuration,
-          remainingDuration: act.remainingDuration,
-          startDate: act.earlyStart,
-          finishDate: act.earlyFinish,
-          totalFloat: act.totalFloat,
-          status: act.status,
-          predecessors: '', // Will be calculated from relationships
-          successors: '', // Will be calculated from relationships  
-          notes: act.notes
-        }));
-        
-        // Get relationships to populate predecessors/successors
-        const relationships = await dbStorage!.db
-          .select()
-          .from(dbStorage!.schema.relationships)
-          .where(eq(dbStorage!.schema.relationships.projectId, projectId));
-        
-        // Build predecessor/successor maps
-        const predMap = new Map<string, string[]>();
-        const succMap = new Map<string, string[]>();
-        
-        relationships.forEach(rel => {
-          const predAct = projectActivities.find(a => a.id === rel.predecessorActivityId);
-          const succAct = projectActivities.find(a => a.id === rel.successorActivityId);
-          
-          if (predAct && succAct) {
-            const predId = predAct.activityId;
-            const succId = succAct.activityId;
-            
-            if (!predMap.has(succId)) predMap.set(succId, []);
-            if (!succMap.has(predId)) succMap.set(predId, []);
-            
-            predMap.get(succId)!.push(predId);
-            succMap.get(predId)!.push(succId);
-          }
-        });
-        
-        // Update activities with predecessor/successor info
-        activities.forEach(act => {
-          act.predecessors = (predMap.get(act.activityId) || []).join(',');
-          act.successors = (succMap.get(act.activityId) || []).join(',');
-        });
-        
-      } else {
-        // MemStorage fallback approach
-        const project = await storage.getProject(projectId);
-        if (!project) {
-          return res.status(404).json({ error: "Project not found" });
-        }
-        
-        projectName = project.name;
-        const projectActivities = await storage.getActivitiesByProject(projectId);
-        
-        // Get relationships for memory storage
-        const projectRelationships = await storage.getRelationshipsByProject(projectId);
-        
-        // Build predecessor/successor maps for memory storage
-        const memPredMap = new Map<string, string[]>();
-        const memSuccMap = new Map<string, string[]>();
-        
-        projectRelationships.forEach(rel => {
-          const predAct = projectActivities.find(a => a.id === rel.predecessorId);
-          const succAct = projectActivities.find(a => a.id === rel.successorId);
-          
-          if (predAct && succAct) {
-            const predId = predAct.activityId;
-            const succId = succAct.activityId;
-            
-            if (!memPredMap.has(succId)) memPredMap.set(succId, []);
-            if (!memSuccMap.has(predId)) memSuccMap.set(predId, []);
-            
-            memPredMap.get(succId)!.push(predId);
-            memSuccMap.get(predId)!.push(succId);
-          }
-        });
-        
-        // Map to ScheduleActivity format
-        activities = projectActivities.map(act => ({
-          id: act.id,
-          scheduleId: 'mem-export',
-          activityId: act.activityId,
-          activityName: act.name,
-          activityType: act.type,
-          originalDuration: act.originalDuration,
-          remainingDuration: act.remainingDuration,
-          startDate: act.earlyStart,
-          finishDate: act.earlyFinish,
-          totalFloat: act.totalFloat,
-          status: act.status,
-          predecessors: (memPredMap.get(act.activityId) || []).join(','),
-          successors: (memSuccMap.get(act.activityId) || []).join(','),
-          notes: act.notes
-        }));
+      // Get project
+      const project = await storage.getProject(projectId);
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
       }
       
-      // Create a mock schedule object for export
-      const mockSchedule = {
-        id: `export-${projectId}`,
+      // Get activities and relationships from storage
+      const projectActivities = await storage.getActivitiesByProject(projectId);
+      const projectRelationships = await storage.getRelationshipsByProject(projectId);
+      
+      console.log('🔍 MSP Export Debug - Activities from storage:', {
         projectId,
+        activitiesCount: projectActivities.length,
+        relationshipsCount: projectRelationships.length,
+        sampleActivity: projectActivities[0] || null
+      });
+      
+      if (projectActivities.length === 0) {
+        return res.status(404).json({ error: "No activities found for this project" });
+      }
+      
+      // Build predecessor/successor maps
+      const predMap = new Map<string, string[]>();
+      const succMap = new Map<string, string[]>();
+      
+      projectRelationships.forEach(rel => {
+        const predAct = projectActivities.find(a => a.id === rel.predecessorId);
+        const succAct = projectActivities.find(a => a.id === rel.successorId);
+        
+        if (predAct && succAct) {
+          const predId = predAct.activityId;
+          const succId = succAct.activityId;
+          
+          if (!predMap.has(succId)) predMap.set(succId, []);
+          if (!succMap.has(predId)) succMap.set(predId, []);
+          
+          predMap.get(succId)!.push(predId);
+          succMap.get(predId)!.push(succId);
+        }
+      });
+      
+      // Convert to ScheduleActivity format for export
+      console.log('🔄 MSP Export Debug - Converting to ScheduleActivity format...');
+      const scheduleActivities: ScheduleActivity[] = projectActivities.map(act => ({
+        id: act.id,
+        scheduleId: 'direct-export',
+        activityId: act.activityId,
+        activityName: act.name,
+        activityType: act.type,
+        originalDuration: act.originalDuration,
+        remainingDuration: act.remainingDuration,
+        startDate: act.earlyStart,
+        finishDate: act.earlyFinish,
+        totalFloat: act.totalFloat,
+        status: act.status === "NotStarted" ? "Not Started" : 
+                act.status === "InProgress" ? "In Progress" : "Completed",
+        predecessors: (predMap.get(act.activityId) || []).join(','),
+        successors: (succMap.get(act.activityId) || []).join(','),
+        notes: act.notes
+      }));
+      
+      console.log('✅ MSP Export Debug - ScheduleActivities created:', {
+        count: scheduleActivities.length,
+        sampleScheduleActivity: scheduleActivities[0] || null
+      });
+      
+      // Create ProjectSchedule for export
+      const schedule: ProjectSchedule = {
+        id: 'export-schedule',
+        projectId: projectId,
         scheduleType: 'CPM',
-        dataDate: new Date().toISOString().split('T')[0],
-        startDate: activities.length > 0 ? activities.reduce((earliest, act) => 
-          (!earliest || (act.startDate && act.startDate < earliest)) ? act.startDate : earliest, 
-        null) || new Date().toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        finishDate: activities.length > 0 ? activities.reduce((latest, act) => 
-          (!latest || (act.finishDate && act.finishDate > latest)) ? act.finishDate : latest,
-        null) || new Date().toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        dataDate: project.dataDate || new Date().toISOString().split('T')[0],
+        startDate: project.contractStartDate || projectActivities[0]?.earlyStart || new Date().toISOString().split('T')[0],
+        finishDate: project.contractFinishDate || projectActivities[projectActivities.length - 1]?.earlyFinish || new Date().toISOString().split('T')[0],
         version: 1,
-        notes: `Exported from ${projectName}`,
-        fileUrl: null,
-        createdAt: new Date(),
-        updatedAt: new Date()
+        notes: `Exported from ${project.name}`
       };
       
-      // Export schedule
+      // Export using the schedule exporter
+      console.log('🚀 MSP Export Debug - Calling exportSchedule with:', {
+        format,
+        scheduleId: schedule.id,
+        activitiesCount: scheduleActivities.length,
+        projectName: project.name
+      });
+      
       const exportResult = await exportSchedule(
         format as 'xer' | 'xml' | 'pdf' | 'csv' | 'json',
-        mockSchedule,
-        activities,
-        projectName
+        schedule,
+        scheduleActivities,
+        project.name
       );
+      
+      console.log('📄 MSP Export Debug - Export result:', {
+        contentLength: exportResult.content.length,
+        mimeType: exportResult.mimeType,
+        filename: exportResult.filename,
+        contentPreview: exportResult.content.substring(0, 500) + '...'
+      });
       
       // Set appropriate headers
       res.setHeader('Content-Type', exportResult.mimeType);
       res.setHeader('Content-Disposition', `attachment; filename="${exportResult.filename}"`);
       
-      // Send file content
+      // For XML format, ensure proper content type
+      if (format === 'xml') {
+        res.setHeader('Content-Type', 'application/xml; charset=utf-8');
+      }
+      
       res.send(exportResult.content);
+      
     } catch (error) {
       console.error("Error exporting project:", error);
-      res.status(500).json({ error: "Failed to export project" });
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      res.status(500).json({ 
+        error: "Failed to export project",
+        details: errorMessage 
+      });
+    }
+  });
+
+  // Get activities for a project
+  app.get("/api/projects/:projectId/activities", isAuthenticated, async (req, res) => {
+    try {
+      const activities = await storage.getActivitiesByProject(req.params.projectId);
+      res.json(activities);
+    } catch (error) {
+      console.error("Error fetching activities:", error);
+      res.status(500).json({ error: "Failed to fetch activities" });
+    }
+  });
+
+  // Update schedule based on meeting discussion (simplified version)
+  app.post("/api/projects/:projectId/schedules/update", isAuthenticated, async (req, res) => {
+    try {
+      const { updates, reason } = req.body;
+      
+      if (!updates || !Array.isArray(updates)) {
+        return res.status(400).json({ error: "Updates array is required" });
+      }
+      
+      let updatedCount = 0;
+      const appliedUpdates = [];
+      
+      for (const update of updates) {
+        try {
+          const { activityId, field, newValue } = update;
+          
+          // Find the activity
+          const activities = await storage.getActivitiesByProject(req.params.projectId);
+          const activity = activities.find(a => a.activityId === activityId);
+          
+          if (activity) {
+            // Build update object
+            const updateData: any = {};
+            updateData[field] = newValue;
+            
+            await storage.updateActivity(activity.id, updateData);
+            updatedCount++;
+            appliedUpdates.push(update);
+          }
+        } catch (error) {
+          console.error(`Failed to update activity ${update.activityId}:`, error);
+        }
+      }
+      
+      res.json({
+        success: true,
+        appliedUpdates: updatedCount,
+        updates: appliedUpdates,
+        reason: reason || "Manual schedule update"
+      });
+      
+    } catch (error) {
+      console.error("Error updating schedule:", error);
+      res.status(500).json({ error: "Failed to update schedule" });
     }
   });
 }
