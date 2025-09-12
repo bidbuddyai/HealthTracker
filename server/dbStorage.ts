@@ -17,7 +17,7 @@ import type {
 } from "@shared/schema";
 import {
   users, projects, wbs, activities, relationships, calendars,
-  resources, resourceAssignments, baselines, tiaScenarios, tiaFragnets,
+  resources, resourceAssignments, baselines, baselineActivities, tiaScenarios, tiaFragnets,
   tiaDelays, tiaResults, scheduleUpdates, importExportHistory,
   aiContext, activityCodes, activityComments, attachments,
   auditLogs, projectMembers, scheduleVersions
@@ -113,8 +113,128 @@ export class DbStorage implements IStorage {
 
   async deleteProject(id: string): Promise<boolean> {
     try {
-      const result = await db.delete(projects).where(eq(projects.id, id));
-      return (result.rowCount ?? 0) > 0;
+      // First check if project exists
+      const project = await this.getProject(id);
+      if (!project) {
+        return false;
+      }
+
+      // Wrap entire deletion sequence in a transaction for atomicity
+      return await db.transaction(async (tx) => {
+        // Get all activities for this project to help with cascading deletes
+        const projectActivities = await tx.select().from(activities).where(eq(activities.projectId, id));
+        const activityIds = projectActivities.map(a => a.id);
+
+        // Get all TIA scenarios for this project
+        const projectTiaScenarios = await tx.select().from(tiaScenarios).where(eq(tiaScenarios.projectId, id));
+        const tiaScenarioIds = projectTiaScenarios.map(s => s.id);
+
+        // Get all TIA fragnets for these scenarios
+        const tiaFragnetsForProject = tiaScenarioIds.length > 0 
+          ? await tx.select().from(tiaFragnets).where(sql`${tiaFragnets.scenarioId} = ANY(${tiaScenarioIds})`)
+          : [];
+        const tiaFragnetIds = tiaFragnetsForProject.map(f => f.id);
+
+        // Get all baselines for this project
+        const projectBaselines = await tx.select().from(baselines).where(eq(baselines.projectId, id));
+        const baselineIds = projectBaselines.map(b => b.id);
+
+        // Delete in proper order to avoid foreign key violations
+
+        // 1. Delete resource assignments (reference activities)
+        if (activityIds.length > 0) {
+          await tx.delete(resourceAssignments).where(sql`${resourceAssignments.activityId} = ANY(${activityIds})`);
+        }
+
+        // 2. Delete activity comments (reference activities)
+        if (activityIds.length > 0) {
+          await tx.delete(activityComments).where(sql`${activityComments.activityId} = ANY(${activityIds})`);
+        }
+
+        // 3. Delete attachments that reference activities
+        if (activityIds.length > 0) {
+          await tx.delete(attachments).where(sql`${attachments.activityId} = ANY(${activityIds})`);
+        }
+
+        // 4. Delete relationships (reference activities as predecessors/successors)
+        if (activityIds.length > 0) {
+          await tx.delete(relationships).where(
+            sql`${relationships.predecessorId} = ANY(${activityIds}) OR ${relationships.successorId} = ANY(${activityIds})`
+          );
+        }
+
+        // 5. Delete TIA delays (reference tia fragnets and scenarios)
+        if (tiaFragnetIds.length > 0) {
+          await tx.delete(tiaDelays).where(sql`${tiaDelays.fragnetId} = ANY(${tiaFragnetIds})`);
+        }
+        if (tiaScenarioIds.length > 0) {
+          await tx.delete(tiaDelays).where(sql`${tiaDelays.scenarioId} = ANY(${tiaScenarioIds})`);
+        }
+
+        // 6. Delete TIA fragnets (reference TIA scenarios)
+        if (tiaScenarioIds.length > 0) {
+          await tx.delete(tiaFragnets).where(sql`${tiaFragnets.scenarioId} = ANY(${tiaScenarioIds})`);
+        }
+
+        // 7. Delete TIA results (reference TIA scenarios)
+        if (tiaScenarioIds.length > 0) {
+          await tx.delete(tiaResults).where(sql`${tiaResults.scenarioId} = ANY(${tiaScenarioIds})`);
+        }
+
+        // 8. Delete TIA scenarios (reference projects)
+        await tx.delete(tiaScenarios).where(eq(tiaScenarios.projectId, id));
+
+        // 9. Delete baseline activities (reference baselines)
+        if (baselineIds.length > 0) {
+          await tx.delete(baselineActivities).where(sql`${baselineActivities.baselineId} = ANY(${baselineIds})`);
+        }
+
+        // 10. Delete activities (reference projects and wbs)
+        await tx.delete(activities).where(eq(activities.projectId, id));
+
+        // 11. Delete resources (reference projects)
+        await tx.delete(resources).where(eq(resources.projectId, id));
+
+        // 12. Delete WBS items (reference projects)
+        await tx.delete(wbs).where(eq(wbs.projectId, id));
+
+        // 13. Delete calendars (reference projects) - note: some calendars may be global (projectId = null)
+        await tx.delete(calendars).where(eq(calendars.projectId, id));
+
+        // 14. Delete baselines (reference projects)
+        await tx.delete(baselines).where(eq(baselines.projectId, id));
+
+        // 15. Delete schedule updates (reference projects)
+        await tx.delete(scheduleUpdates).where(eq(scheduleUpdates.projectId, id));
+
+        // 16. Delete import export history (reference projects)
+        await tx.delete(importExportHistory).where(eq(importExportHistory.projectId, id));
+
+        // 17. Delete AI context (reference projects)
+        await tx.delete(aiContext).where(eq(aiContext.projectId, id));
+
+        // 18. Delete activity codes (reference projects)
+        await tx.delete(activityCodes).where(eq(activityCodes.projectId, id));
+
+        // 19. Delete attachments that only reference projects
+        await tx.delete(attachments).where(and(
+          eq(attachments.projectId, id),
+          sql`${attachments.activityId} IS NULL`
+        ));
+
+        // 20. Delete audit logs (reference projects)
+        await tx.delete(auditLogs).where(eq(auditLogs.projectId, id));
+
+        // 21. Delete project members (reference projects)
+        await tx.delete(projectMembers).where(eq(projectMembers.projectId, id));
+
+        // 22. Delete schedule versions (reference projects)
+        await tx.delete(scheduleVersions).where(eq(scheduleVersions.projectId, id));
+
+        // 23. Finally delete the project itself
+        const result = await tx.delete(projects).where(eq(projects.id, id));
+        return (result.rowCount ?? 0) > 0;
+      });
     } catch (error) {
       console.error("Error deleting project:", error);
       return false;
