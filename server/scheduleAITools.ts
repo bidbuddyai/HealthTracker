@@ -89,7 +89,9 @@ When documents are provided, ALWAYS extract:
 - Resource-driven sequencing (one crane, limited crews)
 - Include: Submittals, procurement, inspections, testing, commissioning
 
-Return schedules as JSON with this structure:
+CRITICAL: Return ONLY valid JSON in your response. Do not include explanatory text, comments, or markdown. Start your response directly with the opening brace { and end with the closing brace }.
+
+Return schedules as JSON with this exact structure:
 {
   "activities": [
     {
@@ -121,6 +123,136 @@ IMPORTANT:
 - Duration must be a number in DAYS (not a string, not "0 days", just the number like 5, 10, 15)
 - Include realistic durations based on construction standards
 - Ensure all predecessor relationships are valid activity IDs`;
+
+// Robust JSON extraction function that handles multiple AI response formats
+function extractJSONFromResponse(content: string): { success: boolean; data?: any; method?: string; error?: string } {
+  // Strategy 1: Try to parse as pure JSON first (fastest path)
+  try {
+    const result = JSON.parse(content.trim());
+    return { success: true, data: result, method: "pure_json" };
+  } catch (e) {
+    // Not pure JSON, continue with other strategies
+  }
+  
+  // Strategy 2: Extract JSON from code blocks (```json ... ``` or ```...```)
+  const codeBlockMatches = content.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/gi);
+  if (codeBlockMatches && codeBlockMatches.length > 0) {
+    for (const match of codeBlockMatches) {
+      const jsonContent = match.replace(/```(?:json)?\s*/gi, '').replace(/\s*```/g, '').trim();
+      try {
+        const result = JSON.parse(jsonContent);
+        return { success: true, data: result, method: "code_block" };
+      } catch (e) {
+        continue; // Try next code block
+      }
+    }
+  }
+  
+  // Strategy 3: Find the largest valid JSON object in the response
+  // Look for patterns where JSON starts (after explanatory text)
+  const jsonIndicators = [
+    /Here's the schedule as JSON:\s*(\{[\s\S]*\})/i,
+    /JSON response:\s*(\{[\s\S]*\})/i,
+    /\n\s*(\{[\s\S]*\})\s*$/,  // JSON at the end after newlines
+    /(?:^|\n)(\{[\s\S]*\})(?:\n|$)/,  // JSON on its own lines
+  ];
+  
+  for (const pattern of jsonIndicators) {
+    const match = content.match(pattern);
+    if (match && match[1]) {
+      try {
+        const result = JSON.parse(match[1].trim());
+        return { success: true, data: result, method: "pattern_match" };
+      } catch (e) {
+        continue; // Try next pattern
+      }
+    }
+  }
+  
+  // Strategy 4: Progressive JSON extraction - find balanced braces
+  let openBraces = 0;
+  let startIndex = -1;
+  let endIndex = -1;
+  
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+    
+    if (char === '{') {
+      if (openBraces === 0) {
+        startIndex = i; // Found the start of potential JSON
+      }
+      openBraces++;
+    } else if (char === '}') {
+      openBraces--;
+      if (openBraces === 0 && startIndex !== -1) {
+        endIndex = i;
+        // Found a balanced JSON object, try to parse it
+        const jsonCandidate = content.substring(startIndex, endIndex + 1);
+        try {
+          const result = JSON.parse(jsonCandidate);
+          // Validate it looks like a schedule response
+          if (result && (result.activities || result.summary)) {
+            return { success: true, data: result, method: "balanced_braces" };
+          }
+        } catch (e) {
+          // Continue looking for next balanced object
+        }
+        startIndex = -1; // Reset for next search
+      }
+    }
+  }
+  
+  // Strategy 5: Extract multiple JSON objects and find the best one
+  const allJsonObjects = [];
+  const jsonRegex = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
+  let match;
+  
+  while ((match = jsonRegex.exec(content)) !== null) {
+    try {
+      const obj = JSON.parse(match[0]);
+      allJsonObjects.push({ obj, raw: match[0], index: match.index });
+    } catch (e) {
+      // Skip invalid JSON
+    }
+  }
+  
+  // Find the largest/most complete JSON object
+  if (allJsonObjects.length > 0) {
+    const bestMatch = allJsonObjects.reduce((best, current) => {
+      const currentScore = (current.obj.activities?.length || 0) + 
+                          (current.obj.summary ? 10 : 0) + 
+                          (current.obj.recommendations?.length || 0);
+      const bestScore = (best.obj.activities?.length || 0) + 
+                       (best.obj.summary ? 10 : 0) + 
+                       (best.obj.recommendations?.length || 0);
+      return currentScore > bestScore ? current : best;
+    });
+    
+    return { success: true, data: bestMatch.obj, method: "best_object" };
+  }
+  
+  // Strategy 6: Last resort - try to clean and extract any JSON-like structure
+  const cleanedContent = content
+    .replace(/^[^{]*/, '')  // Remove everything before first {
+    .replace(/[^}]*$/, '') // Remove everything after last }
+    .replace(/```[^`]*```/g, '') // Remove code blocks
+    .replace(/\n\s*\/\/.*$/gm, '') // Remove comments
+    .trim();
+  
+  if (cleanedContent.startsWith('{') && cleanedContent.endsWith('}')) {
+    try {
+      const result = JSON.parse(cleanedContent);
+      return { success: true, data: result, method: "cleaned_extraction" };
+    } catch (e) {
+      // Final fallback failed
+    }
+  }
+  
+  return { 
+    success: false, 
+    error: `Failed to extract JSON using all strategies. Content preview: ${content.substring(0, 200)}...` 
+  };
+}
 
 export async function generateScheduleWithAI(request: ScheduleAIRequest): Promise<ScheduleAIResponse> {
   console.log("=== AI GENERATION START ===");
@@ -470,23 +602,48 @@ Provide:
     let content = (response as any).choices[0].message.content || "{}";
     console.log("Content length:", content?.length);
     console.log("Content preview:", content?.substring(0, 200));
+    console.log("Content ends with:", content?.substring(-100));
     
-    // Remove any thinking prefix or non-JSON content before the actual JSON
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      content = jsonMatch[0];
-    }
+    // Diagnostic: Check response structure
+    const looksLikeJSON = content.trim().startsWith('{') && content.trim().endsWith('}');
+    const containsJSON = content.includes('"activities"') || content.includes('"summary"');
+    console.log("Response analysis - starts/ends with braces:", looksLikeJSON, "contains schedule fields:", containsJSON);
+    
+    // Use robust JSON extraction
+    console.log("Starting robust JSON extraction...");
+    const extractedJSON = extractJSONFromResponse(content);
     
     let result;
-    try {
-      result = JSON.parse(content);
-    } catch (parseError) {
-      console.error('Failed to parse AI response:', content.substring(0, 200));
+    if (extractedJSON.success) {
+      result = extractedJSON.data;
+      console.log("✅ Successfully extracted JSON using method:", extractedJSON.method);
+      console.log("Extracted data validation:");
+      console.log("- Activities count:", result.activities?.length || 0);
+      console.log("- Has summary:", !!result.summary);
+      console.log("- Has critical path:", !!result.criticalPath);
+      console.log("- Has recommendations:", !!result.recommendations);
+      
+      // Validate the extracted data structure
+      if (!result.activities || !Array.isArray(result.activities)) {
+        console.warn("⚠️ Warning: activities field is missing or not an array");
+        result.activities = [];
+      }
+    } else {
+      console.error('❌ All JSON extraction methods failed:', extractedJSON.error);
+      console.error('Response analysis:');
+      console.error('- Content length:', content.length);
+      console.error('- Starts with "{" :', content.trim().startsWith('{'));
+      console.error('- Ends with "}" :', content.trim().endsWith('}'));
+      console.error('- Contains "activities":', content.includes('"activities"'));
+      console.error('- Contains "summary":', content.includes('"summary"'));
+      console.error('- First 500 chars:', content.substring(0, 500));
+      console.error('- Last 200 chars:', content.substring(content.length - 200));
+      
       // Return a default structure if parsing fails
       result = {
         activities: [],
-        summary: "Failed to parse AI response",
-        recommendations: []
+        summary: "Failed to parse AI response - all extraction methods failed",
+        recommendations: ["The AI returned a response that could not be parsed as JSON", `Response length: ${content.length} chars`, `Response preview: ${content.substring(0, 100)}...`]
       };
     }
     
