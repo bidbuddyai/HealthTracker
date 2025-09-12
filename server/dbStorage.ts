@@ -1,4 +1,4 @@
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import { db } from "./db";
 import type { IStorage } from "./storage";
 import type {
@@ -131,7 +131,7 @@ export class DbStorage implements IStorage {
 
         // Get all TIA fragnets for these scenarios
         const tiaFragnetsForProject = tiaScenarioIds.length > 0 
-          ? await tx.select().from(tiaFragnets).where(sql`${tiaFragnets.scenarioId} = ANY(${tiaScenarioIds})`)
+          ? await tx.select().from(tiaFragnets).where(inArray(tiaFragnets.scenarioId, tiaScenarioIds))
           : [];
         const tiaFragnetIds = tiaFragnetsForProject.map(f => f.id);
 
@@ -143,42 +143,42 @@ export class DbStorage implements IStorage {
 
         // 1. Delete resource assignments (reference activities)
         if (activityIds.length > 0) {
-          await tx.delete(resourceAssignments).where(sql`${resourceAssignments.activityId} = ANY(${activityIds})`);
+          await tx.delete(resourceAssignments).where(inArray(resourceAssignments.activityId, activityIds));
         }
 
         // 2. Delete activity comments (reference activities)
         if (activityIds.length > 0) {
-          await tx.delete(activityComments).where(sql`${activityComments.activityId} = ANY(${activityIds})`);
+          await tx.delete(activityComments).where(inArray(activityComments.activityId, activityIds));
         }
 
         // 3. Delete attachments that reference activities
         if (activityIds.length > 0) {
-          await tx.delete(attachments).where(sql`${attachments.activityId} = ANY(${activityIds})`);
+          await tx.delete(attachments).where(inArray(attachments.activityId, activityIds));
         }
 
         // 4. Delete relationships (reference activities as predecessors/successors)
         if (activityIds.length > 0) {
           await tx.delete(relationships).where(
-            sql`${relationships.predecessorId} = ANY(${activityIds}) OR ${relationships.successorId} = ANY(${activityIds})`
+            sql`${relationships.predecessorId} IN (${activityIds.join(',')}) OR ${relationships.successorId} IN (${activityIds.join(',')})`
           );
         }
 
         // 5. Delete TIA delays (reference tia fragnets and scenarios)
         if (tiaFragnetIds.length > 0) {
-          await tx.delete(tiaDelays).where(sql`${tiaDelays.fragnetId} = ANY(${tiaFragnetIds})`);
+          await tx.delete(tiaDelays).where(inArray(tiaDelays.fragnetId, tiaFragnetIds));
         }
         if (tiaScenarioIds.length > 0) {
-          await tx.delete(tiaDelays).where(sql`${tiaDelays.scenarioId} = ANY(${tiaScenarioIds})`);
+          await tx.delete(tiaDelays).where(inArray(tiaDelays.scenarioId, tiaScenarioIds));
         }
 
         // 6. Delete TIA fragnets (reference TIA scenarios)
         if (tiaScenarioIds.length > 0) {
-          await tx.delete(tiaFragnets).where(sql`${tiaFragnets.scenarioId} = ANY(${tiaScenarioIds})`);
+          await tx.delete(tiaFragnets).where(inArray(tiaFragnets.scenarioId, tiaScenarioIds));
         }
 
         // 7. Delete TIA results (reference TIA scenarios)
         if (tiaScenarioIds.length > 0) {
-          await tx.delete(tiaResults).where(sql`${tiaResults.scenarioId} = ANY(${tiaScenarioIds})`);
+          await tx.delete(tiaResults).where(inArray(tiaResults.scenarioId, tiaScenarioIds));
         }
 
         // 8. Delete TIA scenarios (reference projects)
@@ -186,7 +186,7 @@ export class DbStorage implements IStorage {
 
         // 9. Delete baseline activities (reference baselines)
         if (baselineIds.length > 0) {
-          await tx.delete(baselineActivities).where(sql`${baselineActivities.baselineId} = ANY(${baselineIds})`);
+          await tx.delete(baselineActivities).where(inArray(baselineActivities.baselineId, baselineIds));
         }
 
         // 10. Delete activities (reference projects and wbs)
