@@ -158,9 +158,10 @@ export class DbStorage implements IStorage {
 
         // 4. Delete relationships (reference activities as predecessors/successors)
         if (activityIds.length > 0) {
-          await tx.delete(relationships).where(
-            sql`${relationships.predecessorId} IN (${activityIds.join(',')}) OR ${relationships.successorId} IN (${activityIds.join(',')})`
-          );
+          // Delete relationships where any activity is a predecessor
+          await tx.delete(relationships).where(inArray(relationships.predecessorId, activityIds));
+          // Delete relationships where any activity is a successor
+          await tx.delete(relationships).where(inArray(relationships.successorId, activityIds));
         }
 
         // 5. Delete TIA delays (reference tia fragnets and scenarios)
