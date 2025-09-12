@@ -306,6 +306,9 @@ export class MemStorage implements IStorage {
         actualFinish: null,
         baselineStart: act.earlyStart,
         baselineFinish: act.earlyFinish,
+        baselineDuration: act.originalDuration,
+        baselineCost: null,
+        baselineWork: null,
         totalFloat: 0,
         freeFloat: 0,
         isCritical: act.isCritical || false,
@@ -370,6 +373,8 @@ export class MemStorage implements IStorage {
       contractStartDate: insertProject.contractStartDate ?? null,
       contractFinishDate: insertProject.contractFinishDate ?? null,
       dataDate: insertProject.dataDate ?? null,
+      colorPrimary: insertProject.colorPrimary ?? "#10b981",
+      colorSecondary: insertProject.colorSecondary ?? "#059669",
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -436,10 +441,12 @@ export class MemStorage implements IStorage {
     const activity: Activity = {
       ...insertActivity,
       id,
+      type: insertActivity.type ?? "Task",
       wbsId: insertActivity.wbsId ?? null,
       originalDuration: insertActivity.originalDuration ?? null,
       remainingDuration: insertActivity.remainingDuration ?? null,
       actualDuration: insertActivity.actualDuration ?? null,
+      durationUnit: insertActivity.durationUnit ?? null,
       earlyStart: insertActivity.earlyStart ?? null,
       earlyFinish: insertActivity.earlyFinish ?? null,
       lateStart: insertActivity.lateStart ?? null,
@@ -448,10 +455,16 @@ export class MemStorage implements IStorage {
       actualFinish: insertActivity.actualFinish ?? null,
       baselineStart: insertActivity.baselineStart ?? null,
       baselineFinish: insertActivity.baselineFinish ?? null,
+      baselineDuration: insertActivity.baselineDuration ?? null,
+      baselineCost: insertActivity.baselineCost ?? null,
+      baselineWork: insertActivity.baselineWork ?? null,
       totalFloat: insertActivity.totalFloat ?? null,
       freeFloat: insertActivity.freeFloat ?? null,
+      isCritical: insertActivity.isCritical ?? null,
       criticalityIndex: insertActivity.criticalityIndex ?? null,
+      percentComplete: insertActivity.percentComplete ?? null,
       physicalPercentComplete: insertActivity.physicalPercentComplete ?? null,
+      status: insertActivity.status ?? "NotStarted",
       calendarId: insertActivity.calendarId ?? null,
       constraintType: insertActivity.constraintType ?? null,
       constraintDate: insertActivity.constraintDate ?? null,
@@ -519,7 +532,10 @@ export class MemStorage implements IStorage {
     const id = randomUUID();
     const relationship: Relationship = {
       ...insertRelationship,
-      id
+      id,
+      type: insertRelationship.type ?? "FS",
+      lag: insertRelationship.lag ?? null,
+      lagUnit: insertRelationship.lagUnit ?? null
     };
     this.relationships.set(id, relationship);
     return relationship;
@@ -591,6 +607,7 @@ export class MemStorage implements IStorage {
       unit: insertResource.unit ?? null,
       standardRate: insertResource.standardRate ?? null,
       overtimeRate: insertResource.overtimeRate ?? null,
+      maxUnits: insertResource.maxUnits ?? null,
       calendarId: insertResource.calendarId ?? null,
       notes: insertResource.notes ?? null
     };
@@ -624,6 +641,7 @@ export class MemStorage implements IStorage {
     const assignment: ResourceAssignment = {
       ...insertAssignment,
       id,
+      units: insertAssignment.units ?? null,
       plannedUnits: insertAssignment.plannedUnits ?? null,
       actualUnits: insertAssignment.actualUnits ?? null,
       remainingUnits: insertAssignment.remainingUnits ?? null,
@@ -683,6 +701,8 @@ export class MemStorage implements IStorage {
       ...insertBaseline,
       id,
       description: insertBaseline.description ?? null,
+      isActive: insertBaseline.isActive ?? null,
+      isLocked: insertBaseline.isLocked ?? null,
       snapshotData,
       createdAt: new Date()
     };
@@ -811,6 +831,7 @@ export class MemStorage implements IStorage {
       ...insertScenario,
       id,
       description: insertScenario.description ?? null,
+      isActive: insertScenario.isActive ?? null,
       impactType: insertScenario.impactType ?? null,
       createdBy: insertScenario.createdBy ?? null,
       createdAt: new Date()
