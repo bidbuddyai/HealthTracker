@@ -340,6 +340,63 @@ export class DbStorage implements IStorage {
     }
   }
 
+  async upsertActivity(insertActivity: InsertActivity): Promise<Activity> {
+    try {
+      const result = await db
+        .insert(activities)
+        .values(insertActivity)
+        .onConflictDoUpdate({
+          target: [activities.projectId, activities.activityId],
+          set: {
+            name: insertActivity.name,
+            type: insertActivity.type,
+            wbsId: insertActivity.wbsId,
+            originalDuration: insertActivity.originalDuration,
+            remainingDuration: insertActivity.remainingDuration,
+            actualDuration: insertActivity.actualDuration,
+            durationUnit: insertActivity.durationUnit,
+            earlyStart: insertActivity.earlyStart,
+            earlyFinish: insertActivity.earlyFinish,
+            lateStart: insertActivity.lateStart,
+            lateFinish: insertActivity.lateFinish,
+            actualStart: insertActivity.actualStart,
+            actualFinish: insertActivity.actualFinish,
+            baselineStart: insertActivity.baselineStart,
+            baselineFinish: insertActivity.baselineFinish,
+            baselineDuration: insertActivity.baselineDuration,
+            baselineCost: insertActivity.baselineCost,
+            baselineWork: insertActivity.baselineWork,
+            totalFloat: insertActivity.totalFloat,
+            freeFloat: insertActivity.freeFloat,
+            isCritical: insertActivity.isCritical,
+            criticalityIndex: insertActivity.criticalityIndex,
+            percentComplete: insertActivity.percentComplete,
+            physicalPercentComplete: insertActivity.physicalPercentComplete,
+            status: insertActivity.status,
+            calendarId: insertActivity.calendarId,
+            constraintType: insertActivity.constraintType,
+            constraintDate: insertActivity.constraintDate,
+            deadline: insertActivity.deadline,
+            activityCodes: insertActivity.activityCodes,
+            customFields: insertActivity.customFields,
+            budgetedCost: insertActivity.budgetedCost,
+            actualCost: insertActivity.actualCost,
+            earnedValue: insertActivity.earnedValue,
+            notes: insertActivity.notes,
+            trade: insertActivity.trade,
+            responsibility: insertActivity.responsibility,
+            location: insertActivity.location,
+            updatedAt: new Date()
+          }
+        })
+        .returning();
+      return result[0];
+    } catch (error) {
+      console.error("Error upserting activity:", error);
+      throw error;
+    }
+  }
+
   async deleteActivity(id: string): Promise<boolean> {
     try {
       // First delete all relationships where this activity is involved (predecessor or successor)

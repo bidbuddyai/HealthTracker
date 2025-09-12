@@ -279,7 +279,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             percentComplete: activity.percentComplete || 0
           };
           
-          await storage.createActivity(dbActivity);
+          await storage.upsertActivity(dbActivity);
           savedCount++;
         } catch (activityError: any) {
           console.error(`Failed to save activity ${activity.activityId}:`, activityError.message);

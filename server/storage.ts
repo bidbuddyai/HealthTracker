@@ -38,6 +38,7 @@ export interface IStorage {
   getActivity(id: string): Promise<Activity | undefined>;
   createActivity(activity: InsertActivity): Promise<Activity>;
   updateActivity(id: string, updates: Partial<Activity>): Promise<Activity | undefined>;
+  upsertActivity(activity: InsertActivity): Promise<Activity>; // Insert or update based on projectId + activityId
   deleteActivity(id: string): Promise<boolean>;
   bulkUpdateActivities(updates: { id: string; updates: Partial<Activity> }[]): Promise<void>;
   
@@ -491,6 +492,29 @@ export class MemStorage implements IStorage {
     const updated = { ...existing, ...updates, updatedAt: new Date() };
     this.activities.set(id, updated);
     return updated;
+  }
+
+  async upsertActivity(insertActivity: InsertActivity): Promise<Activity> {
+    // Find existing activity by projectId + activityId
+    const existing = Array.from(this.activities.values()).find(
+      a => a.projectId === insertActivity.projectId && a.activityId === insertActivity.activityId
+    );
+    
+    if (existing) {
+      // Update existing activity
+      const updated = { 
+        ...existing, 
+        ...insertActivity, 
+        id: existing.id, // Keep existing id
+        createdAt: existing.createdAt, // Keep original creation date
+        updatedAt: new Date() 
+      };
+      this.activities.set(existing.id, updated);
+      return updated;
+    } else {
+      // Create new activity
+      return await this.createActivity(insertActivity);
+    }
   }
 
   async deleteActivity(id: string): Promise<boolean> {

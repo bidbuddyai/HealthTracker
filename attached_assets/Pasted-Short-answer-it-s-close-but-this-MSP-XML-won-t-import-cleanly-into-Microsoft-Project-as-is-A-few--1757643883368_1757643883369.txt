@@ -1,0 +1,133 @@
+Short answer: it’s close, but this MSP/XML won’t import cleanly into Microsoft Project as-is. A few structural fields are missing or off-spec, and some values are inconsistent for an 8‑hour workday calendar.
+
+What to fix
+
+Required/structural elements
+
+Missing Project UID and basic project metadata commonly expected by MSP:
+Add <ScheduleFromStart>1</ScheduleFromStart>, <CalendarUID>1</CalendarUID>, <MinutesPerDay>480</MinutesPerDay>, <MinutesPerWeek>2400</MinutesPerWeek>, <DaysPerMonth>20</DaysPerMonth>, <DefaultStartTime>08:00:00</DefaultStartTime>, <DefaultFinishTime>17:00:00</DefaultFinishTime>, <CurrencyDigits>, <CurrencySymbol>, etc. While not all are strictly required, many importers expect them.
+Calendar definition is incomplete:
+Your <Calendar> only has UID/Name/IsBaseCalendar. For working time, MSP usually needs <WeekDays> with working/nonworking settings or a <BaseCalendarUID> reference. Without working time, durations vs. start/finish may resolve oddly.
+Root task (project summary) should be ID=0, OutlineLevel=0, Summary=1, but it normally also includes Start/Finish to bracket sub‑tasks. Consider adding <Start> and <Finish> matching the project dates.
+Task date consistency with durations:
+Example: Task 1 has Duration PT8H0M0S but Start 2025‑01‑15T08:00 and Finish 2025‑01‑16T17:00 (spans 2 working days at 8h/day). If you intend a one‑day task, set Finish to 2025‑01‑15T17:00 or keep Finish and change Duration to PT16H0M0S.
+Several tasks have similar mismatches (Duration not aligned with the span between Start and Finish given an 8‑hour day and nonworking weekends).
+PredecessorLink structure:
+MSP XML typically nests predecessor links within <PredecessorLink> elements containing:
+<PredecessorUID> (the UID of the predecessor task)
+<Type> (1=FS, 2=SS, 3=FF, 4=SF)
+Optional <LinkLag> and <LagFormat>
+Your usage is fine structurally, but ensure UIDs referenced exist and that Start dates don’t violate the dependency unless you intend to set constraints.
+Constraints:
+You provide explicit Start/Finish. Without matching constraints (e.g., <ConstraintType> or <ConstraintDate>), MSP may recalculate dates based on predecessors and calendar, potentially changing what you see. If you want fixed dates, add <ConstraintType>4</ConstraintType> (Start No Earlier Than) with <ConstraintDate>Start</ConstraintDate> per task, or omit explicit Start/Finish and let MSP schedule from predecessors and durations.
+Data cleanups recommended
+
+Add <GUID> for Project and optionally for each Task for stable identity.
+Add <Work> to tasks matching Duration if you plan to add resources later, or omit Work entirely.
+Add <Active>1</Active> for tasks and <IsNull>0</IsNull> to be explicit (some exporters include these).
+Ensure the top-level <CalendarUID> on the project points to your Standard calendar UID (1).
+Minimal example skeleton that imports reliably
+Replace your header and calendar with something like the following and then adjust tasks:
+
+xml
+
+<?xml version="1.0" encoding="UTF-8"?>
+<Project xmlns="http://schemas.microsoft.com/project">
+  <Name>yrsdt</Name>
+  <Title>yrsdt</Title>
+  <GUID>{00000000-0000-0000-0000-000000000001}</GUID>
+  <ScheduleFromStart>1</ScheduleFromStart>
+  <StartDate>2025-01-15T08:00:00</StartDate>
+  <FinishDate>2025-04-15T17:00:00</FinishDate>
+  <CurrentDate>2025-09-12T08:00:00</CurrentDate>
+  <CalendarUID>1</CalendarUID>
+  <MinutesPerDay>480</MinutesPerDay>
+  <MinutesPerWeek>2400</MinutesPerWeek>
+  <DaysPerMonth>20</DaysPerMonth>
+  <DefaultStartTime>08:00:00</DefaultStartTime>
+  <DefaultFinishTime>17:00:00</DefaultFinishTime>
+  <Calendars>
+    <Calendar>
+      <UID>1</UID>
+      <Name>Standard</Name>
+      <IsBaseCalendar>1</IsBaseCalendar>
+      <WeekDays>
+        <WeekDay>
+          <DayType>1</DayType> <!-- Sunday -->
+          <DayWorking>0</DayWorking>
+        </WeekDay>
+        <WeekDay>
+          <DayType>2</DayType> <!-- Monday -->
+          <DayWorking>1</DayWorking>
+          <WorkingTimes>
+            <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+            <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+          </WorkingTimes>
+        </WeekDay>
+        <WeekDay>
+          <DayType>3</DayType> <!-- Tuesday -->
+          <DayWorking>1</DayWorking>
+          <WorkingTimes>
+            <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+            <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+          </WorkingTimes>
+        </WeekDay>
+        <WeekDay>
+          <DayType>4</DayType> <!-- Wednesday -->
+          <DayWorking>1</DayWorking>
+          <WorkingTimes>
+            <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+            <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+          </WorkingTimes>
+        </WeekDay>
+        <WeekDay>
+          <DayType>5</DayType> <!-- Thursday -->
+          <DayWorking>1</DayWorking>
+          <WorkingTimes>
+            <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+            <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+          </WorkingTimes>
+        </WeekDay>
+        <WeekDay>
+          <DayType>6</DayType> <!-- Friday -->
+          <DayWorking>1</DayWorking>
+          <WorkingTimes>
+            <WorkingTime><FromTime>08:00:00</FromTime><ToTime>12:00:00</ToTime></WorkingTime>
+            <WorkingTime><FromTime>13:00:00</FromTime><ToTime>17:00:00</ToTime></WorkingTime>
+          </WorkingTimes>
+        </WeekDay>
+        <WeekDay>
+          <DayType>7</DayType> <!-- Saturday -->
+          <DayWorking>0</DayWorking>
+        </WeekDay>
+      </WeekDays>
+    </Calendar>
+  </Calendars>
+  <Tasks>
+    <Task>
+      <UID>0</UID>
+      <ID>0</ID>
+      <Name>yrsdt</Name>
+      <Summary>1</Summary>
+      <OutlineLevel>0</OutlineLevel>
+      <Start>2025-01-15T08:00:00</Start>
+      <Finish>2025-04-15T17:00:00</Finish>
+    </Task>
+    <!-- Example corrected first task -->
+    <Task>
+      <UID>1</UID>
+      <ID>1</ID>
+      <Name>Notice to Proceed</Name>
+      <Type>0</Type>
+      <Duration>PT8H0M0S</Duration>
+      <DurationFormat>7</DurationFormat>
+      <Start>2025-01-15T08:00:00</Start>
+      <Finish>2025-01-15T17:00:00</Finish>
+      <OutlineLevel>1</OutlineLevel>
+      <WBS>1</WBS>
+      <Critical>1</Critical>
+      <TotalSlack>0</TotalSlack>
+    </Task>
+    <!-- Keep adding tasks; ensure each Finish matches Start + Duration respecting calendar, or omit Start and let predecessors drive dates -->
+  </Tasks>
+</Project>
