@@ -516,6 +516,44 @@ export class MSProjectXMLExporter {
   }
   
   /**
+   * Calculate working hours between two dates (Mon-Fri, 8-hour days)
+   * Used for summary task duration calculations
+   */
+  private calculateWorkingHoursBetweenDates(startDate: string, finishDate: string): number {
+    const start = new Date(startDate);
+    const finish = new Date(finishDate);
+    
+    // If same date, return 8 hours (minimum 1 working day)
+    if (start.toISOString().split('T')[0] === finish.toISOString().split('T')[0]) {
+      return 8;
+    }
+    
+    let workingDays = 0;
+    const current = new Date(start);
+    
+    while (current <= finish) {
+      // Count working days (Mon-Fri)
+      const dayOfWeek = current.getDay();
+      if (dayOfWeek !== 0 && dayOfWeek !== 6) { // Not Sunday (0) or Saturday (6)
+        workingDays++;
+      }
+      current.setDate(current.getDate() + 1);
+    }
+    
+    // Convert working days to hours (8 hours per day)
+    const workingHours = Math.max(8, workingDays * 8); // Minimum 8 hours
+    
+    console.log('📊 Working hours calculation:', {
+      startDate,
+      finishDate,
+      workingDays,
+      workingHours
+    });
+    
+    return workingHours;
+  }
+  
+  /**
    * Calculate the actual project date span from all activities
    */
   private calculateProjectDateSpan(activities: ScheduleActivity[], fallbackStartDate: string): { 
@@ -765,10 +803,16 @@ export class MSProjectXMLExporter {
     // Tasks section
     xml += '  <Tasks>\n';
     
+    // Calculate summary task duration based on project span
+    const summaryDurationHours = this.calculateWorkingHoursBetweenDates(validProjectStart, validProjectFinish);
+    const summaryDurationFormat = `PT${summaryDurationHours}H0M0S`;
+    
     // Root summary task with validated project dates that span all activities
-    console.log('📋 Creating summary task (UID 0) with validated dates:', {
+    console.log('📋 Creating summary task (UID 0) with validated dates and calculated duration:', {
       validProjectStart,
-      validProjectFinish
+      validProjectFinish,
+      summaryDurationHours,
+      summaryDurationFormat
     });
     
     xml += '    <Task>\n';
@@ -784,9 +828,9 @@ export class MSProjectXMLExporter {
     xml += '      <Priority>500</Priority>\n';
     xml += '      <Start>' + this.formatDateForMSP(validProjectStart) + '</Start>\n';
     xml += '      <Finish>' + this.formatDateForMSP(validProjectFinish, '17:00:00') + '</Finish>\n';
-    xml += '      <Duration>PT0H0M0S</Duration>\n'; // Summary tasks have zero duration
+    xml += '      <Duration>' + summaryDurationFormat + '</Duration>\n';
     xml += '      <DurationFormat>7</DurationFormat>\n';
-    xml += '      <Work>PT0H0M0S</Work>\n';
+    xml += '      <Work>' + summaryDurationFormat + '</Work>\n';
     xml += '      <ResumeValid>0</ResumeValid>\n';
     xml += '      <EffortDriven>1</EffortDriven>\n';
     xml += '      <Recurring>0</Recurring>\n';
@@ -843,7 +887,7 @@ export class MSProjectXMLExporter {
     xml += '      <Active>1</Active>\n';
     xml += '      <ManualStart>' + this.formatDateForMSP(validProjectStart) + '</ManualStart>\n';
     xml += '      <ManualFinish>' + this.formatDateForMSP(validProjectFinish, '17:00:00') + '</ManualFinish>\n';
-    xml += '      <ManualDuration>PT0H0M0S</ManualDuration>\n';
+    xml += '      <ManualDuration>' + summaryDurationFormat + '</ManualDuration>\n';
     xml += '    </Task>\n';
     
     // Individual activity tasks using validated dependencies
