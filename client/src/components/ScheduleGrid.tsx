@@ -112,10 +112,8 @@ export default function ScheduleGrid({
   // WBS Mutations
   const createWbsMutation = useMutation({
     mutationFn: async (data: InsertWbs) => {
-      return apiRequest(`/api/projects/${projectId}/wbs`, {
-        method: 'POST',
-        body: JSON.stringify(data)
-      });
+      const response = await apiRequest('POST', `/api/projects/${projectId}/wbs`, data);
+      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'wbs'] });
@@ -135,10 +133,8 @@ export default function ScheduleGrid({
 
   const updateWbsMutation = useMutation({
     mutationFn: async ({ id, ...data }: { id: string } & Partial<Wbs>) => {
-      return apiRequest(`/api/wbs/${id}`, {
-        method: 'PUT',
-        body: JSON.stringify(data)
-      });
+      const response = await apiRequest('PUT', `/api/wbs/${id}`, data);
+      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'wbs'] });
@@ -159,7 +155,8 @@ export default function ScheduleGrid({
 
   const deleteWbsMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest(`/api/wbs/${id}`, { method: 'DELETE' });
+      const response = await apiRequest('DELETE', `/api/wbs/${id}`);
+      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'wbs'] });
@@ -177,7 +174,8 @@ export default function ScheduleGrid({
 
   const indentWbsMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest(`/api/wbs/${id}/indent`, { method: 'POST' });
+      const response = await apiRequest('POST', `/api/wbs/${id}/indent`);
+      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'wbs'] });
@@ -195,7 +193,8 @@ export default function ScheduleGrid({
 
   const outdentWbsMutation = useMutation({
     mutationFn: async (id: string) => {
-      return apiRequest(`/api/wbs/${id}/outdent`, { method: 'POST' });
+      const response = await apiRequest('POST', `/api/wbs/${id}/outdent`);
+      return response.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'wbs'] });
@@ -214,10 +213,10 @@ export default function ScheduleGrid({
   // Generate WBS Code
   const { data: generatedCode } = useQuery({
     queryKey: ['/api/projects', projectId, 'wbs/generate-code', selectedWbs],
-    queryFn: () => apiRequest(`/api/projects/${projectId}/wbs/generate-code`, {
-      method: 'POST',
-      body: JSON.stringify({ parentId: selectedWbs })
-    }),
+    queryFn: async () => {
+      const response = await apiRequest('POST', `/api/projects/${projectId}/wbs/generate-code`, { parentId: selectedWbs });
+      return response.json();
+    },
     enabled: showWbsDialog && !editingWbs
   });
 
@@ -246,7 +245,7 @@ export default function ScheduleGrid({
       name: wbs.name,
       level: wbs.level,
       sequenceNumber: wbs.sequenceNumber,
-      rollupSettings: wbs.rollupSettings
+      rollupSettings: wbs.rollupSettings as any
     });
     setShowWbsDialog(true);
   };

@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/neon-serverless";
 import { Pool, neonConfig } from "@neondatabase/serverless";
-import { eq, desc, and, or, isNull } from "drizzle-orm";
+import { eq, desc, and, or, isNull, sql } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import * as schema from "@shared/schema";
 import type {
@@ -127,8 +127,338 @@ export class ScheduleDbStorage implements IStorage {
   }
 
   async deleteWbs(id: string): Promise<boolean> {
-    const result = await db.delete(schema.wbs).where(eq(schema.wbs.id, id));
-    return !!result;
+    try {
+      // Check if this WBS has children - don't allow deletion if it does
+      const children = await this.getWbsChildren(id);
+      if (children.length > 0) {
+        throw new Error("Cannot delete WBS item that has children. Delete children first.");
+      }
+      
+      // Check if this WBS has activities assigned to it
+      const assignedActivities = await db.select().from(schema.activities).where(eq(schema.activities.wbsId, id));
+      if (assignedActivities.length > 0) {
+        throw new Error("Cannot delete WBS item that has activities assigned. Reassign or delete activities first.");
+      }
+      
+      const result = await db.delete(schema.wbs).where(eq(schema.wbs.id, id));
+      return !!result;
+    } catch (error) {
+      console.error('Error deleting WBS:', error);
+      throw error;
+    }
+  }
+
+  async getWbsHierarchy(projectId: string): Promise<Wbs[]> {
+    try {
+      // Get all WBS items ordered by level then sequence number
+      const wbsItems = await db
+        .select()
+        .from(schema.wbs)
+        .where(eq(schema.wbs.projectId, projectId))
+        .orderBy(schema.wbs.level, schema.wbs.sequenceNumber);
+      
+      return wbsItems;
+    } catch (error) {
+      console.error('Error getting WBS hierarchy:', error);
+      return [];
+    }
+  }
+
+  async getWbsChildren(wbsId: string): Promise<Wbs[]> {
+    try {
+      return await db
+        .select()
+        .from(schema.wbs)
+        .where(eq(schema.wbs.parentId, wbsId))
+        .orderBy(schema.wbs.sequenceNumber);
+    } catch (error) {
+      console.error('Error getting WBS children:', error);
+      return [];
+    }
+  }
+
+  async getWbsDescendants(wbsId: string): Promise<Wbs[]> {
+    try {
+      const descendants: Wbs[] = [];
+      const children = await this.getWbsChildren(wbsId);
+      
+      for (const child of children) {
+        descendants.push(child);
+        const childDescendants = await this.getWbsDescendants(child.id);
+        descendants.push(...childDescendants);
+      }
+      
+      return descendants;
+    } catch (error) {
+      console.error('Error getting WBS descendants:', error);
+      return [];
+    }
+  }
+
+  async generateWbsCode(projectId: string, parentId?: string): Promise<string> {
+    try {
+      if (!parentId) {
+        // Generate root level code by finding max existing code + 1
+        const rootItems = await db
+          .select()
+          .from(schema.wbs)
+          .where(and(eq(schema.wbs.projectId, projectId), sql`${schema.wbs.parentId} IS NULL`))
+          .orderBy(schema.wbs.sequenceNumber);
+        
+        if (rootItems.length === 0) {
+          return "1";
+        }
+        
+        // Find the maximum numeric code among root items
+        const maxCode = rootItems.reduce((max, item) => {
+          const numericCode = parseInt(item.code, 10);
+          return isNaN(numericCode) ? max : Math.max(max, numericCode);
+        }, 0);
+        
+        return (maxCode + 1).toString();
+      } else {
+        // Generate child code based on parent
+        const parent = await this.getWbs(parentId);
+        if (!parent) {
+          throw new Error("Parent WBS not found");
+        }
+        
+        const siblings = await this.getWbsChildren(parentId);
+        
+        if (siblings.length === 0) {
+          return `${parent.code}.1`;
+        }
+        
+        // Find the maximum last segment among siblings
+        const maxLastSegment = siblings.reduce((max, item) => {
+          const lastSegment = item.code.split('.').pop();
+          const numericSegment = parseInt(lastSegment || '0', 10);
+          return isNaN(numericSegment) ? max : Math.max(max, numericSegment);
+        }, 0);
+        
+        return `${parent.code}.${maxLastSegment + 1}`;
+      }
+    } catch (error) {
+      console.error('Error generating WBS code:', error);
+      throw error;
+    }
+  }
+
+  async indentWbs(wbsId: string): Promise<Wbs | undefined> {
+    try {
+      return await db.transaction(async (tx) => {
+        // Get current WBS item
+        const currentWbs = await tx.select().from(schema.wbs).where(eq(schema.wbs.id, wbsId)).limit(1);
+        if (!currentWbs[0]) {
+          throw new Error("WBS item not found");
+        }
+        
+        const current = currentWbs[0];
+        
+        // Find the previous sibling at the same level to become the new parent
+        const previousSibling = await tx
+          .select()
+          .from(schema.wbs)
+          .where(
+            and(
+              eq(schema.wbs.projectId, current.projectId),
+              eq(schema.wbs.level, current.level),
+              current.parentId ? eq(schema.wbs.parentId, current.parentId) : sql`${schema.wbs.parentId} IS NULL`,
+              sql`${schema.wbs.sequenceNumber} < ${current.sequenceNumber}`
+            )
+          )
+          .orderBy(sql`${schema.wbs.sequenceNumber} DESC`)
+          .limit(1);
+        
+        if (previousSibling.length === 0) {
+          throw new Error("Cannot indent: no previous sibling to become parent");
+        }
+        
+        const newParent = previousSibling[0];
+        
+        // Get new sequence number as the last child of the new parent
+        const newSiblings = await this.getWbsChildren(newParent.id);
+        const newSequenceNumber = newSiblings.length + 1;
+        
+        // Generate new WBS code
+        const newCode = await this.generateWbsCode(current.projectId, newParent.id);
+        
+        // Update the WBS item
+        const result = await tx
+          .update(schema.wbs)
+          .set({
+            parentId: newParent.id,
+            level: current.level + 1,
+            sequenceNumber: newSequenceNumber,
+            code: newCode
+          })
+          .where(eq(schema.wbs.id, wbsId))
+          .returning();
+        
+        return result[0];
+      });
+    } catch (error) {
+      console.error('Error indenting WBS:', error);
+      return undefined;
+    }
+  }
+
+  async outdentWbs(wbsId: string): Promise<Wbs | undefined> {
+    try {
+      return await db.transaction(async (tx) => {
+        // Get current WBS item
+        const currentWbs = await tx.select().from(schema.wbs).where(eq(schema.wbs.id, wbsId)).limit(1);
+        if (!currentWbs[0]) {
+          throw new Error("WBS item not found");
+        }
+        
+        const current = currentWbs[0];
+        
+        // Can't outdent root level items
+        if (!current.parentId || current.level <= 1) {
+          throw new Error("Cannot outdent: item is already at root level");
+        }
+        
+        // Get parent to move up one level
+        const parent = await this.getWbs(current.parentId);
+        if (!parent) {
+          throw new Error("Parent WBS not found");
+        }
+        
+        // Get new siblings at the parent's level
+        const newSiblings = parent.parentId 
+          ? await this.getWbsChildren(parent.parentId)
+          : await tx
+              .select()
+              .from(schema.wbs)
+              .where(and(eq(schema.wbs.projectId, current.projectId), sql`${schema.wbs.parentId} IS NULL`))
+              .orderBy(schema.wbs.sequenceNumber);
+        
+        const newSequenceNumber = newSiblings.length + 1;
+        
+        // Generate new WBS code
+        const newCode = await this.generateWbsCode(current.projectId, parent.parentId || undefined);
+        
+        // Update the WBS item
+        const result = await tx
+          .update(schema.wbs)
+          .set({
+            parentId: parent.parentId,
+            level: current.level - 1,
+            sequenceNumber: newSequenceNumber,
+            code: newCode
+          })
+          .where(eq(schema.wbs.id, wbsId))
+          .returning();
+        
+        return result[0];
+      });
+    } catch (error) {
+      console.error('Error outdenting WBS:', error);
+      return undefined;
+    }
+  }
+
+  async reorderWbs(wbsId: string, newSequenceNumber: number): Promise<void> {
+    try {
+      await db.transaction(async (tx) => {
+        // Get the WBS item to reorder
+        const currentWbs = await tx.select().from(schema.wbs).where(eq(schema.wbs.id, wbsId)).limit(1);
+        if (!currentWbs[0]) {
+          throw new Error("WBS item not found");
+        }
+        
+        const current = currentWbs[0];
+        const oldSequenceNumber = current.sequenceNumber;
+        
+        if (oldSequenceNumber === newSequenceNumber) {
+          return; // No change needed
+        }
+        
+        // Get all siblings at the same level
+        const siblings = current.parentId 
+          ? await this.getWbsChildren(current.parentId)
+          : await tx
+              .select()
+              .from(schema.wbs)
+              .where(and(eq(schema.wbs.projectId, current.projectId), sql`${schema.wbs.parentId} IS NULL`))
+              .orderBy(schema.wbs.sequenceNumber);
+        
+        // Update sequence numbers for affected items
+        if (newSequenceNumber > oldSequenceNumber) {
+          // Moving down: shift items up
+          for (const sibling of siblings) {
+            if (sibling.sequenceNumber > oldSequenceNumber && sibling.sequenceNumber <= newSequenceNumber) {
+              await tx
+                .update(schema.wbs)
+                .set({ sequenceNumber: sibling.sequenceNumber - 1 })
+                .where(eq(schema.wbs.id, sibling.id));
+            }
+          }
+        } else {
+          // Moving up: shift items down
+          for (const sibling of siblings) {
+            if (sibling.sequenceNumber >= newSequenceNumber && sibling.sequenceNumber < oldSequenceNumber) {
+              await tx
+                .update(schema.wbs)
+                .set({ sequenceNumber: sibling.sequenceNumber + 1 })
+                .where(eq(schema.wbs.id, sibling.id));
+            }
+          }
+        }
+        
+        // Update the target item
+        await tx
+          .update(schema.wbs)
+          .set({ sequenceNumber: newSequenceNumber })
+          .where(eq(schema.wbs.id, wbsId));
+      });
+    } catch (error) {
+      console.error('Error reordering WBS:', error);
+      throw error;
+    }
+  }
+
+  async validateWbsHierarchy(projectId: string): Promise<boolean> {
+    try {
+      const wbsItems = await this.getWbsHierarchy(projectId);
+      
+      // Check for orphaned items (parent doesn't exist)
+      for (const item of wbsItems) {
+        if (item.parentId) {
+          const parent = await this.getWbs(item.parentId);
+          if (!parent || parent.projectId !== projectId) {
+            console.error(`WBS item ${item.id} has invalid parent ${item.parentId}`);
+            return false;
+          }
+          
+          // Check level consistency
+          if (item.level !== parent.level + 1) {
+            console.error(`WBS item ${item.id} has inconsistent level`);
+            return false;
+          }
+        } else {
+          // Root level items should have level 1
+          if (item.level !== 1) {
+            console.error(`Root WBS item ${item.id} should have level 1`);
+            return false;
+          }
+        }
+      }
+      
+      // Check for duplicate codes within the project
+      const codes = wbsItems.map(item => item.code);
+      const uniqueCodes = new Set(codes);
+      if (codes.length !== uniqueCodes.size) {
+        console.error('Duplicate WBS codes found');
+        return false;
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Error validating WBS hierarchy:', error);
+      return false;
+    }
   }
 
   // Activities
@@ -158,6 +488,44 @@ export class ScheduleDbStorage implements IStorage {
   async deleteActivity(id: string): Promise<boolean> {
     const result = await db.delete(schema.activities).where(eq(schema.activities.id, id));
     return !!result;
+  }
+
+  async upsertActivity(activity: InsertActivity): Promise<Activity> {
+    try {
+      const result = await db
+        .insert(schema.activities)
+        .values(activity)
+        .onConflictDoUpdate({
+          target: [schema.activities.projectId, schema.activities.activityId],
+          set: {
+            name: activity.name,
+            type: activity.type,
+            wbsId: activity.wbsId,
+            originalDuration: activity.originalDuration,
+            remainingDuration: activity.remainingDuration,
+            actualDuration: activity.actualDuration,
+            durationUnit: activity.durationUnit,
+            earlyStart: activity.earlyStart,
+            earlyFinish: activity.earlyFinish,
+            lateStart: activity.lateStart,
+            lateFinish: activity.lateFinish,
+            actualStart: activity.actualStart,
+            actualFinish: activity.actualFinish,
+            percentComplete: activity.percentComplete,
+            constraintType: activity.constraintType,
+            constraintDate: activity.constraintDate,
+            calendarId: activity.calendarId,
+            trade: activity.trade,
+            notes: activity.notes,
+            updatedAt: new Date()
+          }
+        })
+        .returning();
+      return result[0];
+    } catch (error) {
+      console.error('Error upserting activity:', error);
+      throw error;
+    }
   }
 
   async bulkUpdateActivities(updates: { id: string; updates: Partial<Activity> }[]): Promise<void> {

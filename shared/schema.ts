@@ -63,7 +63,10 @@ export const wbs = pgTable("wbs", {
   level: integer("level").notNull(),
   sequenceNumber: integer("sequence_number").notNull(),
   rollupSettings: jsonb("rollup_settings")
-});
+}, (table) => ({
+  // Ensure WBS codes are unique within each project
+  projectCodeUnique: uniqueIndex("project_code_unique").on(table.projectId, table.code)
+}));
 
 // Activity Codes (P6-style)
 export const activityCodes = pgTable("activity_codes", {

@@ -16,6 +16,62 @@ import { registerScheduleRoutes } from "./scheduleRoutes";
 import { ObjectStorageService } from "./objectStorage";
 import { analyzeDocuments, type DocumentAnalysis, type ProcessingOptions } from "./documentAnalyzer";
 
+// Project authorization helper
+async function hasProjectAccess(userId: string, projectId: string): Promise<boolean> {
+  try {
+    // Check if user is a member of the project
+    const members = await storage.getProjectMembers(projectId);
+    return members.some(member => member.userId === userId && member.isActive);
+  } catch (error) {
+    console.error("Error checking project access:", error);
+    return false;
+  }
+}
+
+// Project authorization middleware
+const requireProjectAccess = async (req: any, res: any, next: any) => {
+  const userId = req.user?.claims?.sub;
+  const projectId = req.params.projectId;
+  
+  if (!userId || !projectId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  
+  const hasAccess = await hasProjectAccess(userId, projectId);
+  if (!hasAccess) {
+    return res.status(403).json({ error: "Access denied to project" });
+  }
+  
+  next();
+};
+
+// WBS authorization middleware - for routes with wbsId param
+const requireWbsAccess = async (req: any, res: any, next: any) => {
+  const userId = req.user?.claims?.sub;
+  const wbsId = req.params.id;
+  
+  if (!userId || !wbsId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  
+  try {
+    const wbs = await storage.getWbs(wbsId);
+    if (!wbs) {
+      return res.status(404).json({ error: "WBS not found" });
+    }
+    
+    const hasAccess = await hasProjectAccess(userId, wbs.projectId);
+    if (!hasAccess) {
+      return res.status(403).json({ error: "Access denied to project" });
+    }
+    
+    next();
+  } catch (error) {
+    console.error("Error checking WBS access:", error);
+    return res.status(500).json({ error: "Failed to verify access" });
+  }
+};
+
 export async function registerRoutes(app: Express): Promise<Server> {
   // Auth middleware
   await setupAuth(app);
@@ -97,7 +153,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // WBS
-  app.get("/api/projects/:projectId/wbs", async (req, res) => {
+  app.get("/api/projects/:projectId/wbs", isAuthenticated, requireProjectAccess, async (req, res) => {
     try {
       const wbs = await storage.getWbsByProject(req.params.projectId);
       res.json(wbs);
@@ -107,7 +163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/projects/:projectId/wbs", async (req, res) => {
+  app.post("/api/projects/:projectId/wbs", isAuthenticated, requireProjectAccess, async (req, res) => {
     try {
       const wbsData = insertWbsSchema.parse({
         ...req.body,
@@ -125,7 +181,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/wbs/:id", async (req, res) => {
+  app.put("/api/wbs/:id", isAuthenticated, requireWbsAccess, async (req, res) => {
     try {
       const wbs = await storage.updateWbs(req.params.id, req.body);
       if (!wbs) {
@@ -138,7 +194,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/wbs/:id", async (req, res) => {
+  app.delete("/api/wbs/:id", isAuthenticated, requireWbsAccess, async (req, res) => {
     try {
       const success = await storage.deleteWbs(req.params.id);
       if (!success) {
@@ -156,7 +212,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // WBS Hierarchy Management
-  app.get("/api/projects/:projectId/wbs/hierarchy", async (req, res) => {
+  app.get("/api/projects/:projectId/wbs/hierarchy", isAuthenticated, requireProjectAccess, async (req, res) => {
     try {
       const wbsHierarchy = await storage.getWbsHierarchy(req.params.projectId);
       res.json(wbsHierarchy);
@@ -166,7 +222,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/wbs/:id/indent", async (req, res) => {
+  app.post("/api/wbs/:id/indent", isAuthenticated, requireWbsAccess, async (req, res) => {
     try {
       const updatedWbs = await storage.indentWbs(req.params.id);
       if (!updatedWbs) {
@@ -183,7 +239,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/wbs/:id/outdent", async (req, res) => {
+  app.post("/api/wbs/:id/outdent", isAuthenticated, requireWbsAccess, async (req, res) => {
     try {
       const updatedWbs = await storage.outdentWbs(req.params.id);
       if (!updatedWbs) {
@@ -200,7 +256,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/wbs/:id/reorder", async (req, res) => {
+  app.post("/api/wbs/:id/reorder", isAuthenticated, requireWbsAccess, async (req, res) => {
     try {
       const { newSequenceNumber } = req.body;
       if (typeof newSequenceNumber !== 'number') {
@@ -219,7 +275,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wbs/:id/children", async (req, res) => {
+  app.get("/api/wbs/:id/children", isAuthenticated, requireWbsAccess, async (req, res) => {
     try {
       const children = await storage.getWbsChildren(req.params.id);
       res.json(children);
@@ -229,7 +285,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/wbs/:id/descendants", async (req, res) => {
+  app.get("/api/wbs/:id/descendants", isAuthenticated, requireWbsAccess, async (req, res) => {
     try {
       const descendants = await storage.getWbsDescendants(req.params.id);
       res.json(descendants);
@@ -239,7 +295,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/projects/:projectId/wbs/generate-code", async (req, res) => {
+  app.post("/api/projects/:projectId/wbs/generate-code", isAuthenticated, requireProjectAccess, async (req, res) => {
     try {
       const { parentId } = req.body;
       const code = await storage.generateWbsCode(req.params.projectId, parentId);
@@ -254,7 +310,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/projects/:projectId/wbs/validate", async (req, res) => {
+  app.get("/api/projects/:projectId/wbs/validate", isAuthenticated, requireProjectAccess, async (req, res) => {
     try {
       const isValid = await storage.validateWbsHierarchy(req.params.projectId);
       res.json({ valid: isValid });

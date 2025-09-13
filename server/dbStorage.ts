@@ -358,14 +358,24 @@ export class DbStorage implements IStorage {
   async generateWbsCode(projectId: string, parentId?: string): Promise<string> {
     try {
       if (!parentId) {
-        // Generate root level code (1, 2, 3, etc.)
+        // Generate root level code by finding max existing code + 1
         const rootItems = await db
           .select()
           .from(wbs)
           .where(and(eq(wbs.projectId, projectId), sql`${wbs.parentId} IS NULL`))
           .orderBy(wbs.sequenceNumber);
         
-        return (rootItems.length + 1).toString();
+        if (rootItems.length === 0) {
+          return "1";
+        }
+        
+        // Find the maximum numeric code among root items
+        const maxCode = rootItems.reduce((max, item) => {
+          const numericCode = parseInt(item.code, 10);
+          return isNaN(numericCode) ? max : Math.max(max, numericCode);
+        }, 0);
+        
+        return (maxCode + 1).toString();
       } else {
         // Generate child code based on parent
         const parent = await this.getWbs(parentId);
@@ -374,9 +384,19 @@ export class DbStorage implements IStorage {
         }
         
         const siblings = await this.getWbsChildren(parentId);
-        const childNumber = siblings.length + 1;
         
-        return `${parent.code}.${childNumber}`;
+        if (siblings.length === 0) {
+          return `${parent.code}.1`;
+        }
+        
+        // Find the maximum last segment among siblings
+        const maxLastSegment = siblings.reduce((max, item) => {
+          const lastSegment = item.code.split('.').pop();
+          const numericSegment = parseInt(lastSegment || '0', 10);
+          return isNaN(numericSegment) ? max : Math.max(max, numericSegment);
+        }, 0);
+        
+        return `${parent.code}.${maxLastSegment + 1}`;
       }
     } catch (error) {
       console.error("Error generating WBS code:", error);
