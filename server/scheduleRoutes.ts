@@ -50,7 +50,6 @@ export function registerScheduleRoutes(app: Express) {
     try {
       const { type, projectDescription, currentActivities, userRequest, startDate, constraints, uploadedFiles, model } = req.body;
       
-      console.log('Generating schedule with AI:', { type, projectDescription, uploadedFiles });
       
       const result = await generateScheduleWithAI({
         type,
@@ -63,7 +62,6 @@ export function registerScheduleRoutes(app: Express) {
         model: model || 'Claude-3-Haiku'
       });
       
-      console.log('AI generation result:', { activitiesCount: result.activities.length });
       
       // Store activities in memory storage
       if (type === 'create' && result.activities.length > 0) {

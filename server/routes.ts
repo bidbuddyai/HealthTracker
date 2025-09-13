@@ -23,7 +23,6 @@ async function hasProjectAccess(userId: string, projectId: string): Promise<bool
     const members = await storage.getProjectMembers(projectId);
     return members.some(member => member.userId === userId && member.isActive);
   } catch (error) {
-    console.error("Error checking project access:", error);
     return false;
   }
 }
@@ -67,7 +66,6 @@ const requireWbsAccess = async (req: any, res: any, next: any) => {
     
     next();
   } catch (error) {
-    console.error("Error checking WBS access:", error);
     return res.status(500).json({ error: "Failed to verify access" });
   }
 };
@@ -83,7 +81,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await storage.getUser(userId);
       res.json(user);
     } catch (error) {
-      console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
     }
   });

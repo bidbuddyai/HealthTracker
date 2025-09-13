@@ -30,7 +30,6 @@ export class DbStorage implements IStorage {
       const result = await db.select().from(users).where(eq(users.id, id)).limit(1);
       return result[0];
     } catch (error) {
-      console.error("Error getting user:", error);
       return undefined;
     }
   }
@@ -62,7 +61,6 @@ export class DbStorage implements IStorage {
       
       return result[0];
     } catch (error) {
-      console.error("Error upserting user:", error);
       throw error;
     }
   }
@@ -72,7 +70,6 @@ export class DbStorage implements IStorage {
     try {
       return await db.select().from(projects);
     } catch (error) {
-      console.error("Error getting projects:", error);
       return [];
     }
   }
@@ -82,7 +79,6 @@ export class DbStorage implements IStorage {
       const result = await db.select().from(projects).where(eq(projects.id, id)).limit(1);
       return result[0];
     } catch (error) {
-      console.error("Error getting project:", error);
       return undefined;
     }
   }
@@ -92,7 +88,6 @@ export class DbStorage implements IStorage {
       const result = await db.insert(projects).values(insertProject).returning();
       return result[0];
     } catch (error) {
-      console.error("Error creating project:", error);
       throw error;
     }
   }
@@ -106,7 +101,6 @@ export class DbStorage implements IStorage {
         .returning();
       return result[0];
     } catch (error) {
-      console.error("Error updating project:", error);
       return undefined;
     }
   }
@@ -247,7 +241,6 @@ export class DbStorage implements IStorage {
     try {
       return await db.select().from(wbs).where(eq(wbs.projectId, projectId));
     } catch (error) {
-      console.error("Error getting WBS by project:", error);
       return [];
     }
   }
@@ -257,7 +250,6 @@ export class DbStorage implements IStorage {
       const result = await db.select().from(wbs).where(eq(wbs.id, id)).limit(1);
       return result[0];
     } catch (error) {
-      console.error("Error getting WBS:", error);
       return undefined;
     }
   }
@@ -267,7 +259,6 @@ export class DbStorage implements IStorage {
       const result = await db.insert(wbs).values(insertWbs).returning();
       return result[0];
     } catch (error) {
-      console.error("Error creating WBS:", error);
       throw error;
     }
   }
@@ -281,7 +272,6 @@ export class DbStorage implements IStorage {
         .returning();
       return result[0];
     } catch (error) {
-      console.error("Error updating WBS:", error);
       return undefined;
     }
   }

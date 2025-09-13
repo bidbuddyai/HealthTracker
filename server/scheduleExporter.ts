@@ -26,7 +26,6 @@ export class DependencyValidator {
     validPredecessorMap: Map<string, string[]>;
     removedEdges: Array<{ from: string, to: string, reason: string }>;
   } {
-    console.log('🔍 DependencyValidator: Starting circular dependency detection and breaking for', activities.length, 'activities');
     
     const activityMap = new Map<string, ScheduleActivity>();
     const removedEdges: Array<{ from: string, to: string, reason: string }> = [];
@@ -54,7 +53,6 @@ export class DependencyValidator {
               to: act.activityId, 
               reason: 'Self-reference removed' 
             });
-            console.warn(`🔄 Removed self-reference: Activity ${act.activityId} cannot be predecessor to itself`);
             return;
           }
           
@@ -65,7 +63,6 @@ export class DependencyValidator {
               to: act.activityId, 
               reason: 'Invalid predecessor not found' 
             });
-            console.warn(`❌ Removed invalid predecessor ${cleanPredId} for activity ${act.activityId}`);
             return;
           }
           
@@ -130,7 +127,6 @@ export class DependencyValidator {
       
       // Check if we have a DAG (no cycles)
       if (sortedNodes.length === activities.length) {
-        console.log(`✅ Cycle breaking completed successfully after ${iterationCount} iterations`);
         break;
       }
       
@@ -138,7 +134,6 @@ export class DependencyValidator {
       const remainingNodes = activities.filter(act => !sortedNodes.includes(act.activityId));
       
       if (remainingNodes.length === 0) {
-        console.error('❌ Unexpected state: No remaining nodes but cycle still detected');
         break;
       }
       
@@ -225,9 +220,7 @@ export class DependencyValidator {
         validPredecessorMap.set(edgeToRemove.to, filteredPreds);
         removedEdges.push(edgeToRemove);
         
-        console.warn(`🔄 Iteration ${iterationCount}: Removed edge ${edgeToRemove.from} -> ${edgeToRemove.to} (${edgeToRemove.reason})`);
       } else {
-        console.error('❌ Could not find edge to remove in cycle breaking iteration', iterationCount);
         break;
       }
     }
@@ -279,21 +272,7 @@ export class DependencyValidator {
       .filter(act => !finalSorted.includes(act.activityId))
       .map(act => act.activityId);
     
-    console.log('📊 Final dependency validation results:', {
-      hasCircularDependencies: finalHasCircularDependencies,
-      circularNodesCount: finalCircularNodes.length,
-      totalActivities: activities.length,
-      validRelationshipsCount: Array.from(validPredecessorMap.values()).reduce((sum, preds) => sum + preds.length, 0),
-      removedEdgesCount: removedEdges.length,
-      iterationsUsed: iterationCount
-    });
     
-    if (finalHasCircularDependencies) {
-      console.error('❌ CRITICAL: Failed to break all circular dependencies after', iterationCount, 'iterations');
-      console.error('❌ Remaining circular nodes:', finalCircularNodes);
-    } else {
-      console.log('✅ SUCCESS: All circular dependencies resolved - graph is now a DAG');
-    }
     
     return {
       hasCircularDependencies: finalHasCircularDependencies,
@@ -310,7 +289,6 @@ export class DependencyValidator {
     validatedPredecessors: Map<string, string[]>;
     warnings: string[];
   } {
-    console.log('🔍 DependencyValidator: Validating logical sequence for', activities.length, 'activities');
     
     const validatedPredecessors = new Map<string, string[]>();
     const warnings: string[] = [];
@@ -363,11 +341,6 @@ export class DependencyValidator {
       validatedPredecessors.set(act.activityId, validPreds);
     });
     
-    console.log('📊 Logical sequence validation results:', {
-      activitiesProcessed: activities.length,
-      warningsCount: warnings.length,
-      totalValidPredecessors: Array.from(validatedPredecessors.values()).reduce((sum, preds) => sum + preds.length, 0)
-    });
     
     return { validatedPredecessors, warnings };
   }
@@ -543,12 +516,6 @@ export class MSProjectXMLExporter {
     // Convert working days to hours (8 hours per day)
     const workingHours = Math.max(8, workingDays * 8); // Minimum 8 hours
     
-    console.log('📊 Working hours calculation:', {
-      startDate,
-      finishDate,
-      workingDays,
-      workingHours
-    });
     
     return workingHours;
   }
@@ -590,7 +557,6 @@ export class MSProjectXMLExporter {
     const projectStart = earliestStart ? (earliestStart as Date).toISOString().split('T')[0] : fallbackStartDate;
     const projectFinish = latestFinish ? (latestFinish as Date).toISOString().split('T')[0] : this.calculateWorkingDaysUTC(fallbackStartDate, 1);
     
-    console.log('📅 Project date span calculated:', { projectStart, projectFinish, activitiesCount: activities.length });
     
     return { projectStart, projectFinish };
   }
@@ -615,10 +581,6 @@ export class MSProjectXMLExporter {
     }
     
     if (finish < start) {
-      console.warn('⚠️ Date validation: Finish date before start date, correcting:', { 
-        originalStart: startDate, 
-        originalFinish: finishDate 
-      });
       
       // If finish is before start, calculate a proper finish date based on start + duration
       const correctedFinish = this.calculateWorkingDaysUTC(startDate, durationDays);
@@ -639,21 +601,11 @@ export class MSProjectXMLExporter {
     const { schedule, activities, projectName } = data;
     const projectGUID = this.generateGUID();
     
-    console.log('🏗️ MSProjectXMLExporter Debug - Starting export with:', {
-      activitiesCount: activities.length,
-      projectName,
-      scheduleId: schedule.id,
-      sampleActivity: activities[0] || null
-    });
     
-    // CRITICAL FIX: Validate dependencies before export to prevent circular dependencies
-    console.log('🔍 Running comprehensive dependency validation before MSP export...');
+    // Validate dependencies before export to prevent circular dependencies
     
     // Step 1: Validate logical sequence first
     const logicalCheck = DependencyValidator.validateLogicalSequence(activities);
-    if (logicalCheck.warnings.length > 0) {
-      console.warn('⚠️ LOGICAL SEQUENCE WARNINGS:', logicalCheck.warnings.slice(0, 10));
-    }
     
     // Step 2: Apply logical validation results to activities
     const logicallyValidatedActivities = activities.map(act => ({
@@ -664,17 +616,9 @@ export class MSProjectXMLExporter {
     // Step 3: Break circular dependencies on logically validated activities
     const circularCheck = DependencyValidator.detectAndBreakCircularDependencies(logicallyValidatedActivities);
     if (circularCheck.hasCircularDependencies) {
-      console.error('❌ CRITICAL: Circular dependencies still exist after breaking attempts!');
-      console.error('❌ Remaining circular nodes:', circularCheck.circularNodes);
       throw new Error(`Export blocked: Circular dependencies detected in activities: ${circularCheck.circularNodes.join(', ')}. Cannot create valid Microsoft Project file.`);
     }
     
-    if (circularCheck.removedEdges.length > 0) {
-      console.warn('🔄 Cycle breaking removed', circularCheck.removedEdges.length, 'problematic edges:');
-      circularCheck.removedEdges.slice(0, 5).forEach(edge => {
-        console.warn(`  ❌ ${edge.from} -> ${edge.to}: ${edge.reason}`);
-      });
-    }
     
     // Step 4: Use cycle-broken predecessors for export (CRITICAL FIX)
     const validatedActivities = activities.map(act => ({
@@ -682,13 +626,6 @@ export class MSProjectXMLExporter {
       predecessors: (circularCheck.validPredecessorMap.get(act.activityId) || []).join(',')
     }));
     
-    console.log('✅ Dependencies fully validated and cycles broken. Using cleaned relationships for export:', {
-      originalPredecessorCount: activities.reduce((sum, act) => sum + (act.predecessors ? act.predecessors.split(',').length : 0), 0),
-      logicallyValidatedCount: Array.from(logicalCheck.validatedPredecessors.values()).reduce((sum, preds) => sum + preds.length, 0),
-      finalValidatedCount: Array.from(circularCheck.validPredecessorMap.values()).reduce((sum, preds) => sum + preds.length, 0),
-      edgesRemovedCount: circularCheck.removedEdges.length,
-      warningsCount: logicalCheck.warnings.length
-    });
     
     // Calculate proper project date span from all activities
     const fallbackStartDate = schedule.startDate || new Date().toISOString().split('T')[0];
@@ -698,14 +635,6 @@ export class MSProjectXMLExporter {
     const { validStartDate: validProjectStart, validFinishDate: validProjectFinish } = 
       this.validateDateRange(projectStart, projectFinish);
     
-    console.log('📅 Project dates calculated and validated:', {
-      originalScheduleStart: schedule.startDate,
-      originalScheduleFinish: schedule.finishDate,
-      calculatedProjectStart: projectStart,
-      calculatedProjectFinish: projectFinish,
-      validatedProjectStart: validProjectStart,
-      validatedProjectFinish: validProjectFinish
-    });
     
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
     xml += '<Project xmlns="http://schemas.microsoft.com/project">\n';
@@ -808,12 +737,6 @@ export class MSProjectXMLExporter {
     const summaryDurationFormat = `PT${summaryDurationHours}H0M0S`;
     
     // Root summary task with validated project dates that span all activities
-    console.log('📋 Creating summary task (UID 0) with validated dates and calculated duration:', {
-      validProjectStart,
-      validProjectFinish,
-      summaryDurationHours,
-      summaryDurationFormat
-    });
     
     xml += '    <Task>\n';
     xml += '      <UID>0</UID>\n';
