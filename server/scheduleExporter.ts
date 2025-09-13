@@ -90,19 +90,29 @@ export class MSProjectXMLExporter {
     });
   }
   
-  private calculateWorkingDays(startDate: string, durationDays: number): string {
-    // Calculate finish date based on working days (Mon-Fri, 8am-5pm)
-    const start = new Date(startDate);
+  /**
+   * UTC-only working days calculation to avoid timezone issues
+   * Calculates finish date based on working days (Mon-Fri)
+   */
+  private calculateWorkingDaysUTC(startDate: string, durationDays: number): string {
+    if (durationDays <= 0) {
+      return startDate; // For zero duration (milestones), return same date
+    }
+    
+    // Parse date in UTC to avoid timezone issues
+    const [year, month, day] = startDate.split('-').map(Number);
+    const start = new Date(Date.UTC(year, month - 1, day));
     let workingDaysAdded = 0;
     const current = new Date(start);
     
     while (workingDaysAdded < durationDays) {
       // Skip weekends (0 = Sunday, 6 = Saturday)
-      if (current.getDay() !== 0 && current.getDay() !== 6) {
+      if (current.getUTCDay() !== 0 && current.getUTCDay() !== 6) {
         workingDaysAdded++;
       }
+      // Only advance to next day if we haven't reached the target duration
       if (workingDaysAdded < durationDays) {
-        current.setDate(current.getDate() + 1);
+        current.setUTCDate(current.getUTCDate() + 1);
       }
     }
     
@@ -112,6 +122,88 @@ export class MSProjectXMLExporter {
   private formatDateForMSP(dateStr: string, time: string = '08:00:00'): string {
     return `${dateStr}T${time}`;
   }
+  
+  /**
+   * Calculate the actual project date span from all activities
+   */
+  private calculateProjectDateSpan(activities: ScheduleActivity[], fallbackStartDate: string): { 
+    projectStart: string, 
+    projectFinish: string 
+  } {
+    if (activities.length === 0) {
+      const fallbackFinish = this.calculateWorkingDaysUTC(fallbackStartDate, 1);
+      return { 
+        projectStart: fallbackStartDate, 
+        projectFinish: fallbackFinish 
+      };
+    }
+    
+    let earliestStart: Date | null = null;
+    let latestFinish: Date | null = null;
+    
+    activities.forEach(act => {
+      const actStartDate = act.startDate || fallbackStartDate;
+      const actFinishDate = act.finishDate || this.calculateWorkingDaysUTC(actStartDate, act.originalDuration || 1);
+      
+      const startDate = new Date(actStartDate);
+      const finishDate = new Date(actFinishDate);
+      
+      if (!earliestStart || startDate < earliestStart) {
+        earliestStart = startDate;
+      }
+      
+      if (!latestFinish || finishDate > latestFinish) {
+        latestFinish = finishDate;
+      }
+    });
+    
+    const projectStart = earliestStart ? (earliestStart as Date).toISOString().split('T')[0] : fallbackStartDate;
+    const projectFinish = latestFinish ? (latestFinish as Date).toISOString().split('T')[0] : this.calculateWorkingDaysUTC(fallbackStartDate, 1);
+    
+    console.log('📅 Project date span calculated:', { projectStart, projectFinish, activitiesCount: activities.length });
+    
+    return { projectStart, projectFinish };
+  }
+  
+  /**
+   * Validate that finish date is not before start date
+   * Special handling for milestones (duration 0) to preserve start == finish
+   */
+  private validateDateRange(startDate: string, finishDate: string, durationDays: number = 1): { 
+    validStartDate: string, 
+    validFinishDate: string 
+  } {
+    const start = new Date(startDate);
+    const finish = new Date(finishDate);
+    
+    // For milestones (duration 0), allow finish == start
+    if (durationDays === 0) {
+      return {
+        validStartDate: startDate,
+        validFinishDate: startDate  // Milestones have same start and finish
+      };
+    }
+    
+    if (finish < start) {
+      console.warn('⚠️ Date validation: Finish date before start date, correcting:', { 
+        originalStart: startDate, 
+        originalFinish: finishDate 
+      });
+      
+      // If finish is before start, calculate a proper finish date based on start + duration
+      const correctedFinish = this.calculateWorkingDaysUTC(startDate, durationDays);
+      return { 
+        validStartDate: startDate, 
+        validFinishDate: correctedFinish 
+      };
+    }
+    
+    return { 
+      validStartDate: startDate, 
+      validFinishDate: finishDate 
+    };
+  }
+  
   
   export(data: ExportData): string {
     const { schedule, activities, projectName } = data;
@@ -124,6 +216,23 @@ export class MSProjectXMLExporter {
       sampleActivity: activities[0] || null
     });
     
+    // Calculate proper project date span from all activities
+    const fallbackStartDate = schedule.startDate || new Date().toISOString().split('T')[0];
+    const { projectStart, projectFinish } = this.calculateProjectDateSpan(activities, fallbackStartDate);
+    
+    // Validate project date range
+    const { validStartDate: validProjectStart, validFinishDate: validProjectFinish } = 
+      this.validateDateRange(projectStart, projectFinish);
+    
+    console.log('📅 Project dates calculated and validated:', {
+      originalScheduleStart: schedule.startDate,
+      originalScheduleFinish: schedule.finishDate,
+      calculatedProjectStart: projectStart,
+      calculatedProjectFinish: projectFinish,
+      validatedProjectStart: validProjectStart,
+      validatedProjectFinish: validProjectFinish
+    });
+    
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
     xml += '<Project xmlns="http://schemas.microsoft.com/project">\n';
     
@@ -134,9 +243,9 @@ export class MSProjectXMLExporter {
     xml += '  <CreationDate>' + new Date().toISOString() + '</CreationDate>\n';
     xml += '  <LastSaved>' + new Date().toISOString() + '</LastSaved>\n';
     xml += '  <ScheduleFromStart>1</ScheduleFromStart>\n';
-    xml += '  <StartDate>' + this.formatDateForMSP(schedule.startDate) + '</StartDate>\n';
-    xml += '  <FinishDate>' + this.formatDateForMSP(schedule.finishDate, '17:00:00') + '</FinishDate>\n';
-    xml += '  <CurrentDate>' + this.formatDateForMSP(schedule.dataDate) + '</CurrentDate>\n';
+    xml += '  <StartDate>' + this.formatDateForMSP(validProjectStart) + '</StartDate>\n';
+    xml += '  <FinishDate>' + this.formatDateForMSP(validProjectFinish, '17:00:00') + '</FinishDate>\n';
+    xml += '  <CurrentDate>' + this.formatDateForMSP(schedule.dataDate || validProjectStart) + '</CurrentDate>\n';
     xml += '  <CalendarUID>1</CalendarUID>\n';
     xml += '  <DefaultStartTime>08:00:00</DefaultStartTime>\n';
     xml += '  <DefaultFinishTime>17:00:00</DefaultFinishTime>\n';
@@ -167,7 +276,7 @@ export class MSProjectXMLExporter {
     xml += '  <MoveCompletedEndsForward>0</MoveCompletedEndsForward>\n';
     xml += '  <BaselineForEarnedValue>0</BaselineForEarnedValue>\n';
     xml += '  <AutoAddNewResourcesAndTasks>1</AutoAddNewResourcesAndTasks>\n';
-    xml += '  <StatusDate>' + this.formatDateForMSP(schedule.dataDate) + '</StatusDate>\n';
+    xml += '  <StatusDate>' + this.formatDateForMSP(schedule.dataDate || validProjectStart) + '</StatusDate>\n';
     xml += '  <ActualsInSync>0</ActualsInSync>\n';
     xml += '  <RemoveFileProperties>0</RemoveFileProperties>\n';
     xml += '  <AdminProject>0</AdminProject>\n';
@@ -220,9 +329,11 @@ export class MSProjectXMLExporter {
     // Tasks section
     xml += '  <Tasks>\n';
     
-    // Root summary task with proper dates
-    const projectStartDate = schedule.startDate;
-    const projectFinishDate = schedule.finishDate;
+    // Root summary task with validated project dates that span all activities
+    console.log('📋 Creating summary task (UID 0) with validated dates:', {
+      validProjectStart,
+      validProjectFinish
+    });
     
     xml += '    <Task>\n';
     xml += '      <UID>0</UID>\n';
@@ -235,8 +346,8 @@ export class MSProjectXMLExporter {
     xml += '      <OutlineNumber>0</OutlineNumber>\n';
     xml += '      <OutlineLevel>0</OutlineLevel>\n';
     xml += '      <Priority>500</Priority>\n';
-    xml += '      <Start>' + this.formatDateForMSP(projectStartDate) + '</Start>\n';
-    xml += '      <Finish>' + this.formatDateForMSP(projectFinishDate, '17:00:00') + '</Finish>\n';
+    xml += '      <Start>' + this.formatDateForMSP(validProjectStart) + '</Start>\n';
+    xml += '      <Finish>' + this.formatDateForMSP(validProjectFinish, '17:00:00') + '</Finish>\n';
     xml += '      <Duration>PT0H0M0S</Duration>\n'; // Summary tasks have zero duration
     xml += '      <DurationFormat>7</DurationFormat>\n';
     xml += '      <Work>PT0H0M0S</Work>\n';
@@ -251,10 +362,10 @@ export class MSProjectXMLExporter {
     xml += '      <IsSubproject>0</IsSubproject>\n';
     xml += '      <IsSubprojectReadOnly>0</IsSubprojectReadOnly>\n';
     xml += '      <ExternalTask>0</ExternalTask>\n';
-    xml += '      <EarlyStart>' + this.formatDateForMSP(projectStartDate) + '</EarlyStart>\n';
-    xml += '      <EarlyFinish>' + this.formatDateForMSP(projectFinishDate, '17:00:00') + '</EarlyFinish>\n';
-    xml += '      <LateStart>' + this.formatDateForMSP(projectStartDate) + '</LateStart>\n';
-    xml += '      <LateFinish>' + this.formatDateForMSP(projectFinishDate, '17:00:00') + '</LateFinish>\n';
+    xml += '      <EarlyStart>' + this.formatDateForMSP(validProjectStart) + '</EarlyStart>\n';
+    xml += '      <EarlyFinish>' + this.formatDateForMSP(validProjectFinish, '17:00:00') + '</EarlyFinish>\n';
+    xml += '      <LateStart>' + this.formatDateForMSP(validProjectStart) + '</LateStart>\n';
+    xml += '      <LateFinish>' + this.formatDateForMSP(validProjectFinish, '17:00:00') + '</LateFinish>\n';
     xml += '      <StartVariance>0</StartVariance>\n';
     xml += '      <FinishVariance>0</FinishVariance>\n';
     xml += '      <WorkVariance>0</WorkVariance>\n';
@@ -267,7 +378,7 @@ export class MSProjectXMLExporter {
     xml += '      <Cost>0</Cost>\n';
     xml += '      <OvertimeCost>0</OvertimeCost>\n';
     xml += '      <OvertimeWork>PT0H0M0S</OvertimeWork>\n';
-    xml += '      <ActualStart>' + this.formatDateForMSP(projectStartDate) + '</ActualStart>\n';
+    xml += '      <ActualStart>' + this.formatDateForMSP(validProjectStart) + '</ActualStart>\n';
     xml += '      <ActualDuration>PT0H0M0S</ActualDuration>\n';
     xml += '      <ActualCost>0</ActualCost>\n';
     xml += '      <ActualOvertimeCost>0</ActualOvertimeCost>\n';
@@ -294,8 +405,8 @@ export class MSProjectXMLExporter {
     xml += '      <PhysicalPercentComplete>0</PhysicalPercentComplete>\n';
     xml += '      <EarnedValueMethod>0</EarnedValueMethod>\n';
     xml += '      <Active>1</Active>\n';
-    xml += '      <ManualStart>' + this.formatDateForMSP(projectStartDate) + '</ManualStart>\n';
-    xml += '      <ManualFinish>' + this.formatDateForMSP(projectFinishDate, '17:00:00') + '</ManualFinish>\n';
+    xml += '      <ManualStart>' + this.formatDateForMSP(validProjectStart) + '</ManualStart>\n';
+    xml += '      <ManualFinish>' + this.formatDateForMSP(validProjectFinish, '17:00:00') + '</ManualFinish>\n';
     xml += '      <ManualDuration>PT0H0M0S</ManualDuration>\n';
     xml += '    </Task>\n';
     
@@ -311,8 +422,23 @@ export class MSProjectXMLExporter {
       const uid = index + 1;
       const durationDays = act.originalDuration || 1;
       const durationHours = durationDays * 8; // 8 hours per working day
-      const startDate = act.startDate || schedule.startDate;
-      const finishDate = act.finishDate || this.calculateWorkingDays(startDate, durationDays);
+      
+      // Calculate and validate activity dates
+      const rawStartDate = act.startDate || validProjectStart;
+      const rawFinishDate = act.finishDate || this.calculateWorkingDaysUTC(rawStartDate, durationDays);
+      
+      // Validate activity date range with duration context for milestone handling
+      const { validStartDate: activityStartDate, validFinishDate: activityFinishDate } = 
+        this.validateDateRange(rawStartDate, rawFinishDate, durationDays);
+      
+      console.log(`📅 Activity ${act.activityId} dates validated:`, {
+        rawStart: rawStartDate,
+        rawFinish: rawFinishDate,
+        validStart: activityStartDate,
+        validFinish: activityFinishDate,
+        duration: durationDays
+      });
+      
       const remainingDuration = act.remainingDuration || durationDays;
       const percentComplete = this.getPercentComplete(act.status || 'Not Started');
       const taskGUID = this.generateGUID();
@@ -329,8 +455,8 @@ export class MSProjectXMLExporter {
       xml += '      <OutlineNumber>' + uid + '</OutlineNumber>\n';
       xml += '      <OutlineLevel>1</OutlineLevel>\n';
       xml += '      <Priority>500</Priority>\n';
-      xml += '      <Start>' + this.formatDateForMSP(startDate) + '</Start>\n';
-      xml += '      <Finish>' + this.formatDateForMSP(finishDate, '17:00:00') + '</Finish>\n';
+      xml += '      <Start>' + this.formatDateForMSP(activityStartDate) + '</Start>\n';
+      xml += '      <Finish>' + this.formatDateForMSP(activityFinishDate, '17:00:00') + '</Finish>\n';
       xml += '      <Duration>PT' + durationHours + 'H0M0S</Duration>\n';
       xml += '      <DurationFormat>7</DurationFormat>\n';
       xml += '      <Work>PT' + durationHours + 'H0M0S</Work>\n';
@@ -345,10 +471,10 @@ export class MSProjectXMLExporter {
       xml += '      <IsSubproject>0</IsSubproject>\n';
       xml += '      <IsSubprojectReadOnly>0</IsSubprojectReadOnly>\n';
       xml += '      <ExternalTask>0</ExternalTask>\n';
-      xml += '      <EarlyStart>' + this.formatDateForMSP(startDate) + '</EarlyStart>\n';
-      xml += '      <EarlyFinish>' + this.formatDateForMSP(finishDate, '17:00:00') + '</EarlyFinish>\n';
-      xml += '      <LateStart>' + this.formatDateForMSP(startDate) + '</LateStart>\n';
-      xml += '      <LateFinish>' + this.formatDateForMSP(finishDate, '17:00:00') + '</LateFinish>\n';
+      xml += '      <EarlyStart>' + this.formatDateForMSP(activityStartDate) + '</EarlyStart>\n';
+      xml += '      <EarlyFinish>' + this.formatDateForMSP(activityFinishDate, '17:00:00') + '</EarlyFinish>\n';
+      xml += '      <LateStart>' + this.formatDateForMSP(activityStartDate) + '</LateStart>\n';
+      xml += '      <LateFinish>' + this.formatDateForMSP(activityFinishDate, '17:00:00') + '</LateFinish>\n';
       xml += '      <StartVariance>0</StartVariance>\n';
       xml += '      <FinishVariance>0</FinishVariance>\n';
       xml += '      <WorkVariance>0</WorkVariance>\n';
@@ -363,7 +489,7 @@ export class MSProjectXMLExporter {
       xml += '      <OvertimeWork>PT0H0M0S</OvertimeWork>\n';
       
       if (act.status === 'In Progress' || act.status === 'Completed') {
-        xml += '      <ActualStart>' + this.formatDateForMSP(startDate) + '</ActualStart>\n';
+        xml += '      <ActualStart>' + this.formatDateForMSP(activityStartDate) + '</ActualStart>\n';
         const actualDurationHours = act.status === 'Completed' ? durationHours : Math.floor(durationHours * percentComplete / 100);
         xml += '      <ActualDuration>PT' + actualDurationHours + 'H0M0S</ActualDuration>\n';
         xml += '      <ActualWork>PT' + actualDurationHours + 'H0M0S</ActualWork>\n';
@@ -399,8 +525,8 @@ export class MSProjectXMLExporter {
       xml += '      <PhysicalPercentComplete>' + percentComplete + '</PhysicalPercentComplete>\n';
       xml += '      <EarnedValueMethod>0</EarnedValueMethod>\n';
       xml += '      <Active>1</Active>\n';
-      xml += '      <ManualStart>' + this.formatDateForMSP(startDate) + '</ManualStart>\n';
-      xml += '      <ManualFinish>' + this.formatDateForMSP(finishDate, '17:00:00') + '</ManualFinish>\n';
+      xml += '      <ManualStart>' + this.formatDateForMSP(activityStartDate) + '</ManualStart>\n';
+      xml += '      <ManualFinish>' + this.formatDateForMSP(activityFinishDate, '17:00:00') + '</ManualFinish>\n';
       xml += '      <ManualDuration>PT' + durationHours + 'H0M0S</ManualDuration>\n';
       
       if (act.notes) {
