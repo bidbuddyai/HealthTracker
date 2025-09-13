@@ -6,6 +6,398 @@ interface ExportData {
   projectName?: string;
 }
 
+// Dependency validation utilities
+interface ActivityNode {
+  activityId: string;
+  activityName: string;
+  startDate: string;
+  finishDate: string;
+  predecessors: string[];
+}
+
+export class DependencyValidator {
+  /**
+   * CRITICAL FIX: Breaks circular dependencies using deterministic cycle breaking algorithm
+   * Instead of just detecting cycles, this method actively removes problematic edges to create a DAG
+   */
+  static detectAndBreakCircularDependencies(activities: ScheduleActivity[]): {
+    hasCircularDependencies: boolean;
+    circularNodes: string[];
+    validPredecessorMap: Map<string, string[]>;
+    removedEdges: Array<{ from: string, to: string, reason: string }>;
+  } {
+    console.log('🔍 DependencyValidator: Starting circular dependency detection and breaking for', activities.length, 'activities');
+    
+    const activityMap = new Map<string, ScheduleActivity>();
+    const removedEdges: Array<{ from: string, to: string, reason: string }> = [];
+    const validPredecessorMap = new Map<string, string[]>();
+    
+    // Initialize activity map
+    activities.forEach(act => {
+      activityMap.set(act.activityId, act);
+      validPredecessorMap.set(act.activityId, []);
+    });
+    
+    // Step 1: Remove self-references and invalid predecessors
+    activities.forEach(act => {
+      if (act.predecessors) {
+        const predList = act.predecessors.split(',').filter(p => p.trim());
+        const cleanPreds: string[] = [];
+        
+        predList.forEach(predId => {
+          const cleanPredId = predId.trim();
+          
+          // CRITICAL: Remove self-references
+          if (cleanPredId === act.activityId) {
+            removedEdges.push({ 
+              from: cleanPredId, 
+              to: act.activityId, 
+              reason: 'Self-reference removed' 
+            });
+            console.warn(`🔄 Removed self-reference: Activity ${act.activityId} cannot be predecessor to itself`);
+            return;
+          }
+          
+          // Remove invalid predecessors (not found in activity map)
+          if (!activityMap.has(cleanPredId)) {
+            removedEdges.push({ 
+              from: cleanPredId, 
+              to: act.activityId, 
+              reason: 'Invalid predecessor not found' 
+            });
+            console.warn(`❌ Removed invalid predecessor ${cleanPredId} for activity ${act.activityId}`);
+            return;
+          }
+          
+          cleanPreds.push(cleanPredId);
+        });
+        
+        validPredecessorMap.set(act.activityId, cleanPreds);
+      }
+    });
+    
+    // Step 2: Iteratively break cycles using Kahn's algorithm with edge removal
+    let iterationCount = 0;
+    const maxIterations = activities.length * 2; // Prevent infinite loops
+    
+    while (iterationCount < maxIterations) {
+      iterationCount++;
+      
+      // Build current graph state
+      const graph = new Map<string, string[]>();
+      const inDegree = new Map<string, number>();
+      
+      // Initialize
+      activities.forEach(act => {
+        graph.set(act.activityId, []);
+        inDegree.set(act.activityId, 0);
+      });
+      
+      // Build graph from current valid predecessors
+      Array.from(validPredecessorMap.entries()).forEach(([actId, preds]) => {
+        preds.forEach(predId => {
+          if (graph.has(predId) && inDegree.has(actId)) {
+            graph.get(predId)!.push(actId);
+            inDegree.set(actId, (inDegree.get(actId) || 0) + 1);
+          }
+        });
+      });
+      
+      // Run Kahn's algorithm
+      const queue: string[] = [];
+      const sortedNodes: string[] = [];
+      const tempInDegree = new Map(inDegree);
+      
+      // Find nodes with no incoming edges
+      Array.from(tempInDegree.entries()).forEach(([nodeId, degree]) => {
+        if (degree === 0) {
+          queue.push(nodeId);
+        }
+      });
+      
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        sortedNodes.push(current);
+        
+        const neighbors = graph.get(current) || [];
+        for (const neighbor of neighbors) {
+          tempInDegree.set(neighbor, (tempInDegree.get(neighbor) || 0) - 1);
+          if (tempInDegree.get(neighbor) === 0) {
+            queue.push(neighbor);
+          }
+        }
+      }
+      
+      // Check if we have a DAG (no cycles)
+      if (sortedNodes.length === activities.length) {
+        console.log(`✅ Cycle breaking completed successfully after ${iterationCount} iterations`);
+        break;
+      }
+      
+      // Still have cycles - deterministically remove edges
+      const remainingNodes = activities.filter(act => !sortedNodes.includes(act.activityId));
+      
+      if (remainingNodes.length === 0) {
+        console.error('❌ Unexpected state: No remaining nodes but cycle still detected');
+        break;
+      }
+      
+      // Find the edge to remove using deterministic priority:
+      // 1. Edges that violate date constraints
+      // 2. Edges from activities with later start dates
+      // 3. Lexicographic fallback for determinism
+      
+      let edgeToRemove: { from: string, to: string, reason: string } | null = null;
+      
+      // Priority 1: Date constraint violations
+      for (const node of remainingNodes) {
+        const activity = activityMap.get(node.activityId)!;
+        const preds = validPredecessorMap.get(node.activityId) || [];
+        
+        for (const predId of preds) {
+          const predActivity = activityMap.get(predId);
+          if (!predActivity) continue;
+          
+          const actStartDate = new Date(activity.startDate || '1900-01-01');
+          const predFinishDate = new Date(predActivity.finishDate || '1900-01-01');
+          
+          if (predFinishDate > actStartDate) {
+            edgeToRemove = {
+              from: predId,
+              to: node.activityId,
+              reason: 'Date constraint violation - predecessor finishes after successor starts'
+            };
+            break;
+          }
+        }
+        if (edgeToRemove) break;
+      }
+      
+      // Priority 2: Later-starting predecessor edges
+      if (!edgeToRemove) {
+        for (const node of remainingNodes) {
+          const activity = activityMap.get(node.activityId)!;
+          const preds = validPredecessorMap.get(node.activityId) || [];
+          
+          for (const predId of preds) {
+            const predActivity = activityMap.get(predId);
+            if (!predActivity) continue;
+            
+            const actStartDate = new Date(activity.startDate || '1900-01-01');
+            const predStartDate = new Date(predActivity.startDate || '1900-01-01');
+            
+            if (predStartDate >= actStartDate) {
+              edgeToRemove = {
+                from: predId,
+                to: node.activityId,
+                reason: 'Illogical sequence - predecessor starts same or later than successor'
+              };
+              break;
+            }
+          }
+          if (edgeToRemove) break;
+        }
+      }
+      
+      // Priority 3: Lexicographic fallback (deterministic)
+      if (!edgeToRemove) {
+        // Sort remaining nodes and their predecessors lexicographically
+        const sortedRemainingNodes = remainingNodes.sort((a, b) => a.activityId.localeCompare(b.activityId));
+        
+        for (const node of sortedRemainingNodes) {
+          const preds = validPredecessorMap.get(node.activityId) || [];
+          if (preds.length > 0) {
+            const sortedPreds = preds.sort();
+            edgeToRemove = {
+              from: sortedPreds[0],
+              to: node.activityId,
+              reason: 'Lexicographic cycle breaking (deterministic fallback)'
+            };
+            break;
+          }
+        }
+      }
+      
+      // Remove the identified edge
+      if (edgeToRemove) {
+        const currentPreds = validPredecessorMap.get(edgeToRemove.to) || [];
+        const filteredPreds = currentPreds.filter(p => p !== edgeToRemove!.from);
+        validPredecessorMap.set(edgeToRemove.to, filteredPreds);
+        removedEdges.push(edgeToRemove);
+        
+        console.warn(`🔄 Iteration ${iterationCount}: Removed edge ${edgeToRemove.from} -> ${edgeToRemove.to} (${edgeToRemove.reason})`);
+      } else {
+        console.error('❌ Could not find edge to remove in cycle breaking iteration', iterationCount);
+        break;
+      }
+    }
+    
+    // Final validation
+    const finalGraph = new Map<string, string[]>();
+    const finalInDegree = new Map<string, number>();
+    
+    activities.forEach(act => {
+      finalGraph.set(act.activityId, []);
+      finalInDegree.set(act.activityId, 0);
+    });
+    
+    Array.from(validPredecessorMap.entries()).forEach(([actId, preds]) => {
+      preds.forEach(predId => {
+        if (finalGraph.has(predId)) {
+          finalGraph.get(predId)!.push(actId);
+          finalInDegree.set(actId, (finalInDegree.get(actId) || 0) + 1);
+        }
+      });
+    });
+    
+    // Final Kahn's algorithm to verify DAG
+    const finalQueue: string[] = [];
+    const finalSorted: string[] = [];
+    const finalTempInDegree = new Map(finalInDegree);
+    
+    Array.from(finalTempInDegree.entries()).forEach(([nodeId, degree]) => {
+      if (degree === 0) {
+        finalQueue.push(nodeId);
+      }
+    });
+    
+    while (finalQueue.length > 0) {
+      const current = finalQueue.shift()!;
+      finalSorted.push(current);
+      
+      const neighbors = finalGraph.get(current) || [];
+      for (const neighbor of neighbors) {
+        finalTempInDegree.set(neighbor, (finalTempInDegree.get(neighbor) || 0) - 1);
+        if (finalTempInDegree.get(neighbor) === 0) {
+          finalQueue.push(neighbor);
+        }
+      }
+    }
+    
+    const finalHasCircularDependencies = finalSorted.length !== activities.length;
+    const finalCircularNodes = activities
+      .filter(act => !finalSorted.includes(act.activityId))
+      .map(act => act.activityId);
+    
+    console.log('📊 Final dependency validation results:', {
+      hasCircularDependencies: finalHasCircularDependencies,
+      circularNodesCount: finalCircularNodes.length,
+      totalActivities: activities.length,
+      validRelationshipsCount: Array.from(validPredecessorMap.values()).reduce((sum, preds) => sum + preds.length, 0),
+      removedEdgesCount: removedEdges.length,
+      iterationsUsed: iterationCount
+    });
+    
+    if (finalHasCircularDependencies) {
+      console.error('❌ CRITICAL: Failed to break all circular dependencies after', iterationCount, 'iterations');
+      console.error('❌ Remaining circular nodes:', finalCircularNodes);
+    } else {
+      console.log('✅ SUCCESS: All circular dependencies resolved - graph is now a DAG');
+    }
+    
+    return {
+      hasCircularDependencies: finalHasCircularDependencies,
+      circularNodes: finalCircularNodes,
+      validPredecessorMap,
+      removedEdges
+    };
+  }
+  
+  /**
+   * Validates logical sequence based on dates and activity names
+   */
+  static validateLogicalSequence(activities: ScheduleActivity[]): {
+    validatedPredecessors: Map<string, string[]>;
+    warnings: string[];
+  } {
+    console.log('🔍 DependencyValidator: Validating logical sequence for', activities.length, 'activities');
+    
+    const validatedPredecessors = new Map<string, string[]>();
+    const warnings: string[] = [];
+    const activityMap = new Map<string, ScheduleActivity>();
+    
+    activities.forEach(act => activityMap.set(act.activityId, act));
+    
+    // Sort activities by start date for logical ordering
+    const sortedActivities = [...activities].sort((a, b) => {
+      const dateA = new Date(a.startDate || '1900-01-01');
+      const dateB = new Date(b.startDate || '1900-01-01');
+      return dateA.getTime() - dateB.getTime();
+    });
+    
+    activities.forEach(act => {
+      const validPreds: string[] = [];
+      
+      if (act.predecessors) {
+        const predList = act.predecessors.split(',').filter(p => p.trim());
+        
+        for (const predId of predList) {
+          const cleanPredId = predId.trim();
+          const predActivity = activityMap.get(cleanPredId);
+          
+          if (!predActivity) {
+            warnings.push(`Activity ${act.activityId} has invalid predecessor ${cleanPredId} - predecessor not found`);
+            continue;
+          }
+          
+          // Date-based validation
+          const actStartDate = new Date(act.startDate || '1900-01-01');
+          const predFinishDate = new Date(predActivity.finishDate || '1900-01-01');
+          
+          if (predFinishDate > actStartDate) {
+            warnings.push(`Activity ${act.activityId} (${act.activityName}) has predecessor ${cleanPredId} (${predActivity.activityName}) that finishes after it starts - removing invalid predecessor`);
+            continue;
+          }
+          
+          // Logical name-based validation for construction sequences
+          const logicalIssue = this.checkConstructionLogic(act, predActivity);
+          if (logicalIssue) {
+            warnings.push(`Activity ${act.activityId} has illogical predecessor ${cleanPredId}: ${logicalIssue} - removing invalid predecessor`);
+            continue;
+          }
+          
+          validPreds.push(cleanPredId);
+        }
+      }
+      
+      validatedPredecessors.set(act.activityId, validPreds);
+    });
+    
+    console.log('📊 Logical sequence validation results:', {
+      activitiesProcessed: activities.length,
+      warningsCount: warnings.length,
+      totalValidPredecessors: Array.from(validatedPredecessors.values()).reduce((sum, preds) => sum + preds.length, 0)
+    });
+    
+    return { validatedPredecessors, warnings };
+  }
+  
+  /**
+   * Check construction-specific logic violations
+   */
+  private static checkConstructionLogic(activity: ScheduleActivity, predecessor: ScheduleActivity): string | null {
+    const actName = activity.activityName?.toLowerCase() || '';
+    const predName = predecessor.activityName?.toLowerCase() || '';
+    
+    // Air quality testing should not depend on remediation that happens after it
+    if (actName.includes('air quality') && predName.includes('abatement')) {
+      return 'Air quality testing should not depend on abatement work';
+    }
+    
+    // Testing activities should generally not depend on later construction phases
+    if (actName.includes('testing') && (predName.includes('completion') || predName.includes('final'))) {
+      return 'Testing should not depend on final completion activities';
+    }
+    
+    // Clearances should not depend on work that requires the clearance
+    if (actName.includes('clearance') && predName.includes('construction')) {
+      return 'Clearances should not depend on construction work';
+    }
+    
+    return null; // No logical issue found
+  }
+}
+
 // XER Exporter for Primavera P6
 export class XERExporter {
   private tables: Map<string, any[]> = new Map();
@@ -216,9 +608,53 @@ export class MSProjectXMLExporter {
       sampleActivity: activities[0] || null
     });
     
+    // CRITICAL FIX: Validate dependencies before export to prevent circular dependencies
+    console.log('🔍 Running comprehensive dependency validation before MSP export...');
+    
+    // Step 1: Validate logical sequence first
+    const logicalCheck = DependencyValidator.validateLogicalSequence(activities);
+    if (logicalCheck.warnings.length > 0) {
+      console.warn('⚠️ LOGICAL SEQUENCE WARNINGS:', logicalCheck.warnings.slice(0, 10));
+    }
+    
+    // Step 2: Apply logical validation results to activities
+    const logicallyValidatedActivities = activities.map(act => ({
+      ...act,
+      predecessors: (logicalCheck.validatedPredecessors.get(act.activityId) || []).join(',')
+    }));
+    
+    // Step 3: Break circular dependencies on logically validated activities
+    const circularCheck = DependencyValidator.detectAndBreakCircularDependencies(logicallyValidatedActivities);
+    if (circularCheck.hasCircularDependencies) {
+      console.error('❌ CRITICAL: Circular dependencies still exist after breaking attempts!');
+      console.error('❌ Remaining circular nodes:', circularCheck.circularNodes);
+      throw new Error(`Export blocked: Circular dependencies detected in activities: ${circularCheck.circularNodes.join(', ')}. Cannot create valid Microsoft Project file.`);
+    }
+    
+    if (circularCheck.removedEdges.length > 0) {
+      console.warn('🔄 Cycle breaking removed', circularCheck.removedEdges.length, 'problematic edges:');
+      circularCheck.removedEdges.slice(0, 5).forEach(edge => {
+        console.warn(`  ❌ ${edge.from} -> ${edge.to}: ${edge.reason}`);
+      });
+    }
+    
+    // Step 4: Use cycle-broken predecessors for export (CRITICAL FIX)
+    const validatedActivities = activities.map(act => ({
+      ...act,
+      predecessors: (circularCheck.validPredecessorMap.get(act.activityId) || []).join(',')
+    }));
+    
+    console.log('✅ Dependencies fully validated and cycles broken. Using cleaned relationships for export:', {
+      originalPredecessorCount: activities.reduce((sum, act) => sum + (act.predecessors ? act.predecessors.split(',').length : 0), 0),
+      logicallyValidatedCount: Array.from(logicalCheck.validatedPredecessors.values()).reduce((sum, preds) => sum + preds.length, 0),
+      finalValidatedCount: Array.from(circularCheck.validPredecessorMap.values()).reduce((sum, preds) => sum + preds.length, 0),
+      edgesRemovedCount: circularCheck.removedEdges.length,
+      warningsCount: logicalCheck.warnings.length
+    });
+    
     // Calculate proper project date span from all activities
     const fallbackStartDate = schedule.startDate || new Date().toISOString().split('T')[0];
-    const { projectStart, projectFinish } = this.calculateProjectDateSpan(activities, fallbackStartDate);
+    const { projectStart, projectFinish } = this.calculateProjectDateSpan(validatedActivities, fallbackStartDate);
     
     // Validate project date range
     const { validStartDate: validProjectStart, validFinishDate: validProjectFinish } = 
@@ -410,9 +846,9 @@ export class MSProjectXMLExporter {
     xml += '      <ManualDuration>PT0H0M0S</ManualDuration>\n';
     xml += '    </Task>\n';
     
-    // Individual activity tasks
-    console.log('🔄 MSProjectXMLExporter Debug - Processing activities:', activities.length);
-    activities.forEach((act, index) => {
+    // Individual activity tasks using validated dependencies
+    console.log('🔄 MSProjectXMLExporter Debug - Processing validated activities:', validatedActivities.length);
+    validatedActivities.forEach((act, index) => {
       console.log(`📝 Processing activity ${index + 1}/${activities.length}:`, {
         activityId: act.activityId,
         activityName: act.activityName,
@@ -533,12 +969,14 @@ export class MSProjectXMLExporter {
         xml += '      <Notes>' + this.escapeXml(act.notes) + '</Notes>\n';
       }
       
-      // Add predecessor links
-      if (act.predecessors) {
+      // Add validated predecessor links (circular dependencies have been removed)
+      if (act.predecessors && act.predecessors.trim()) {
         const predList = act.predecessors.split(',').filter(p => p.trim());
+        console.log(`🔗 Activity ${act.activityId} validated predecessors:`, predList);
+        
         predList.forEach(pred => {
-          const predIndex = activities.findIndex(a => a.activityId === pred.trim());
-          if (predIndex >= 0) {
+          const predIndex = validatedActivities.findIndex(a => a.activityId === pred.trim());
+          if (predIndex >= 0 && predIndex !== index) { // Prevent self-reference
             xml += '      <PredecessorLink>\n';
             xml += '        <PredecessorUID>' + (predIndex + 1) + '</PredecessorUID>\n';
             xml += '        <Type>1</Type>\n'; // 1 = Finish-to-Start
@@ -546,6 +984,11 @@ export class MSProjectXMLExporter {
             xml += '        <LinkLag>0</LinkLag>\n';
             xml += '        <LagFormat>7</LagFormat>\n';
             xml += '      </PredecessorLink>\n';
+            console.log(`✅ Added valid predecessor: ${pred.trim()} -> ${act.activityId}`);
+          } else if (predIndex === index) {
+            console.warn(`⚠️ Prevented self-reference for activity ${act.activityId}`);
+          } else {
+            console.warn(`⚠️ Predecessor ${pred.trim()} not found for activity ${act.activityId}`);
           }
         });
       }

@@ -6,7 +6,8 @@ import {
   insertActivitySchema, insertRelationshipSchema,
   type Activity, type Relationship, type Project
 } from "@shared/schema";
-import { exportSchedule, type ProjectSchedule, type ScheduleActivity } from "./scheduleExporter";
+import { exportSchedule } from "./scheduleExporter";
+import type { ProjectSchedule, ScheduleActivity } from "@shared/schema";
 import { generateScheduleWithAI } from "./scheduleAITools";
 import { poe } from "./poeClient";
 
@@ -310,28 +311,106 @@ ${fileContent}`;
         return res.status(404).json({ error: "No activities found for this project" });
       }
       
-      // Build predecessor/successor maps
+      // Build and validate predecessor/successor maps using DependencyValidator
+      console.log('🔍 Building validated predecessor/successor maps...');
+      
+      // First convert storage activities to ScheduleActivity format for validation
+      const activitiesForValidation: ScheduleActivity[] = projectActivities.map(act => {
+        // Build initial predecessor list from relationships
+        const relationshipPreds = projectRelationships
+          .filter(rel => rel.successorId === act.id)
+          .map(rel => {
+            const predAct = projectActivities.find(a => a.id === rel.predecessorId);
+            return predAct?.activityId;
+          })
+          .filter((predId): predId is string => predId !== undefined);
+        
+        return {
+          id: act.id,
+          scheduleId: 'validation',
+          activityId: act.activityId,
+          activityName: act.name,
+          activityType: act.type,
+          originalDuration: act.originalDuration,
+          remainingDuration: act.remainingDuration,
+          startDate: act.earlyStart,
+          finishDate: act.earlyFinish,
+          totalFloat: act.totalFloat,
+          status: act.status === "NotStarted" ? "Not Started" : 
+                  act.status === "InProgress" ? "In Progress" : "Completed",
+          predecessors: relationshipPreds.join(','),
+          successors: '', // Will be built from relationships
+          notes: act.notes
+        };
+      });
+      
+      // Import DependencyValidator from scheduleExporter
+      const { DependencyValidator } = await import('./scheduleExporter');
+      
+      // CRITICAL FIX: Validate dependencies and break cycles completely
+      console.log('🔍 Running comprehensive dependency validation with cycle breaking...');
+      
+      // Step 1: Validate logical sequence first
+      const logicalCheck = DependencyValidator.validateLogicalSequence(activitiesForValidation);
+      if (logicalCheck.warnings.length > 0) {
+        console.warn('⚠️ Logical sequence issues detected:', logicalCheck.warnings.slice(0, 10));
+      }
+      
+      // Step 2: Apply logical validation to activities
+      const logicallyValidatedActivities = activitiesForValidation.map(act => ({
+        ...act,
+        predecessors: (logicalCheck.validatedPredecessors.get(act.activityId) || []).join(',')
+      }));
+      
+      // Step 3: Break circular dependencies on logically validated activities  
+      const circularCheck = DependencyValidator.detectAndBreakCircularDependencies(logicallyValidatedActivities);
+      
+      // CRITICAL: Block export if cycles still exist after breaking attempts
+      if (circularCheck.hasCircularDependencies) {
+        console.error('❌ CRITICAL: Export blocked due to unresolvable circular dependencies!');
+        console.error('❌ Remaining circular nodes:', circularCheck.circularNodes);
+        
+        return res.status(422).json({ 
+          error: "Export blocked due to circular dependencies",
+          details: `Circular dependencies detected in activities: ${circularCheck.circularNodes.join(', ')}. These relationships create infinite loops and cannot be exported to a valid schedule file.`,
+          circularNodes: circularCheck.circularNodes,
+          removedEdges: circularCheck.removedEdges
+        });
+      }
+      
+      if (circularCheck.removedEdges.length > 0) {
+        console.warn('🔄 Cycle breaking removed', circularCheck.removedEdges.length, 'problematic edges:');
+        circularCheck.removedEdges.slice(0, 5).forEach(edge => {
+          console.warn(`  ❌ ${edge.from} -> ${edge.to}: ${edge.reason}`);
+        });
+      }
+      
+      // Step 4: Build validated predecessor/successor maps using cycle-broken results
       const predMap = new Map<string, string[]>();
       const succMap = new Map<string, string[]>();
       
-      projectRelationships.forEach(rel => {
-        const predAct = projectActivities.find(a => a.id === rel.predecessorId);
-        const succAct = projectActivities.find(a => a.id === rel.successorId);
+      // Use cycle-broken predecessors for final export (CRITICAL FIX)
+      activitiesForValidation.forEach(act => {
+        const validatedPreds = circularCheck.validPredecessorMap.get(act.activityId) || [];
+        predMap.set(act.activityId, validatedPreds);
         
-        if (predAct && succAct) {
-          const predId = predAct.activityId;
-          const succId = succAct.activityId;
-          
-          if (!predMap.has(succId)) predMap.set(succId, []);
+        // Build successor map from cycle-broken predecessors
+        validatedPreds.forEach(predId => {
           if (!succMap.has(predId)) succMap.set(predId, []);
-          
-          predMap.get(succId)!.push(predId);
-          succMap.get(predId)!.push(succId);
-        }
+          succMap.get(predId)!.push(act.activityId);
+        });
       });
       
-      // Convert to ScheduleActivity format for export
-      console.log('🔄 MSP Export Debug - Converting to ScheduleActivity format...');
+      console.log('✅ Validated predecessor/successor maps built with cycle breaking:', {
+        activitiesProcessed: activitiesForValidation.length,
+        logicalWarnings: logicalCheck.warnings.length,
+        cyclesRemoved: circularCheck.removedEdges.length,
+        finalValidatedRelationships: Array.from(predMap.values()).reduce((sum, preds) => sum + preds.length, 0),
+        guaranteedAcyclic: !circularCheck.hasCircularDependencies
+      });
+      
+      // Convert to ScheduleActivity format for export using validated relationships
+      console.log('🔄 MSP Export Debug - Converting to ScheduleActivity format with validated relationships...');
       const scheduleActivities: ScheduleActivity[] = projectActivities.map(act => ({
         id: act.id,
         scheduleId: 'direct-export',
