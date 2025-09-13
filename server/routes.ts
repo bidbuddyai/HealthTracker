@@ -10,7 +10,7 @@ import {
 } from "@shared/schema";
 import { z } from "zod";
 import { generateScheduleWithAI, identifyScheduleImpacts } from "./scheduleAITools";
-import { poe } from "./poeClient";
+import { poe, POE_MODELS, streamLLMWithReasoning, queryLLM } from "./poeClient";
 import { SYSTEM_ASSISTANT, ToolSchema } from "./assistantTools";
 import { registerScheduleRoutes } from "./scheduleRoutes";
 import { ObjectStorageService } from "./objectStorage";
@@ -1516,13 +1516,71 @@ Return ONLY the enhanced prompt text, nothing else.`;
 
   // Get available AI models
   app.get("/api/ai/models", isAuthenticated, async (req, res) => {
-    res.json([
-      { value: "GPT-5", label: "GPT-5 (Latest)", category: "GPT" },
-      { value: "Claude-Sonnet-4", label: "Claude Sonnet 4", category: "Claude" },
-      { value: "Gemini-2.5-Pro", label: "Gemini 2.5 Pro", category: "Google" },
-      { value: "o3-pro", label: "o3 Pro (Reasoning)", category: "Reasoning" },
-      { value: "Grok-4", label: "Grok 4", category: "Other" }
-    ]);
+    res.json(POE_MODELS);
+  });
+
+  // AI Chat endpoint (streaming chat with model selection)
+  app.post("/api/ai/chat", isAuthenticated, async (req, res) => {
+    try {
+      const { messages, model = "Claude-Sonnet-4", stream = false, preserveReasoning = false } = req.body;
+      
+      if (!messages || !Array.isArray(messages)) {
+        return res.status(400).json({ error: "Messages array is required" });
+      }
+
+      if (stream) {
+        // For streaming responses
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        
+        try {
+          const poeStream = await poe.chat.completions.create({ 
+            model, 
+            messages, 
+            stream: true 
+          });
+          
+          for await (const part of poeStream) {
+            const delta = part.choices?.[0]?.delta?.content ?? "";
+            if (delta) {
+              res.write(`data: ${JSON.stringify({ content: delta })}\n\n`);
+            }
+          }
+          
+          res.write(`data: [DONE]\n\n`);
+          res.end();
+        } catch (streamError) {
+          res.write(`data: ${JSON.stringify({ error: "Stream failed" })}\n\n`);
+          res.end();
+        }
+      } else {
+        // For non-streaming responses with enhanced reasoning support
+        const response = await queryLLM(messages, model, preserveReasoning);
+        
+        if (preserveReasoning && typeof response === 'object' && 'reasoning' in response) {
+          res.json({
+            message: {
+              role: "assistant",
+              content: response.finalAnswer,
+              reasoning: response.reasoning
+            },
+            model
+          });
+        } else {
+          res.json({
+            message: {
+              role: "assistant",
+              content: response
+            },
+            model
+          });
+        }
+      }
+    } catch (error) {
+      console.error("Error with AI chat:", error);
+      res.status(500).json({ error: "Failed to process AI chat request" });
+    }
   });
 
   // Generate presigned upload URL for object storage
