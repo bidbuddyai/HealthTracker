@@ -28,10 +28,18 @@ export interface IStorage {
   
   // WBS
   getWbsByProject(projectId: string): Promise<Wbs[]>;
+  getWbsHierarchy(projectId: string): Promise<Wbs[]>; // Returns WBS in hierarchy order
   getWbs(id: string): Promise<Wbs | undefined>;
   createWbs(wbs: InsertWbs): Promise<Wbs>;
   updateWbs(id: string, updates: Partial<Wbs>): Promise<Wbs | undefined>;
   deleteWbs(id: string): Promise<boolean>;
+  indentWbs(wbsId: string): Promise<Wbs | undefined>; // Move item one level deeper
+  outdentWbs(wbsId: string): Promise<Wbs | undefined>; // Move item one level up
+  generateWbsCode(projectId: string, parentId?: string): Promise<string>; // Generate next WBS code
+  reorderWbs(wbsId: string, newSequenceNumber: number): Promise<void>; // Reorder WBS items
+  getWbsChildren(wbsId: string): Promise<Wbs[]>; // Get immediate children
+  getWbsDescendants(wbsId: string): Promise<Wbs[]>; // Get all descendants
+  validateWbsHierarchy(projectId: string): Promise<boolean>; // Validate hierarchy integrity
   
   // Activities
   getActivitiesByProject(projectId: string): Promise<Activity[]>;
@@ -425,7 +433,263 @@ export class MemStorage implements IStorage {
   }
 
   async deleteWbs(id: string): Promise<boolean> {
+    // Check if this WBS has children
+    const children = await this.getWbsChildren(id);
+    if (children.length > 0) {
+      throw new Error("Cannot delete WBS item that has children. Delete children first.");
+    }
+    
+    // Check if this WBS has activities assigned to it
+    const assignedActivities = Array.from(this.activities.values()).filter(a => a.wbsId === id);
+    if (assignedActivities.length > 0) {
+      throw new Error("Cannot delete WBS item that has activities assigned. Reassign or delete activities first.");
+    }
+    
     return this.wbs.delete(id);
+  }
+
+  async getWbsHierarchy(projectId: string): Promise<Wbs[]> {
+    const wbsItems = Array.from(this.wbs.values())
+      .filter(w => w.projectId === projectId)
+      .sort((a, b) => {
+        if (a.level !== b.level) return a.level - b.level;
+        return a.sequenceNumber - b.sequenceNumber;
+      });
+    return wbsItems;
+  }
+
+  async getWbsChildren(wbsId: string): Promise<Wbs[]> {
+    return Array.from(this.wbs.values())
+      .filter(w => w.parentId === wbsId)
+      .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+  }
+
+  async getWbsDescendants(wbsId: string): Promise<Wbs[]> {
+    const descendants: Wbs[] = [];
+    const children = await this.getWbsChildren(wbsId);
+    
+    for (const child of children) {
+      descendants.push(child);
+      const childDescendants = await this.getWbsDescendants(child.id);
+      descendants.push(...childDescendants);
+    }
+    
+    return descendants;
+  }
+
+  async generateWbsCode(projectId: string, parentId?: string): Promise<string> {
+    if (!parentId) {
+      // Generate root level code (1, 2, 3, etc.)
+      const rootItems = Array.from(this.wbs.values())
+        .filter(w => w.projectId === projectId && !w.parentId)
+        .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+      
+      return (rootItems.length + 1).toString();
+    } else {
+      // Generate child code based on parent
+      const parent = this.wbs.get(parentId);
+      if (!parent) {
+        throw new Error("Parent WBS not found");
+      }
+      
+      const siblings = await this.getWbsChildren(parentId);
+      const childNumber = siblings.length + 1;
+      
+      return `${parent.code}.${childNumber}`;
+    }
+  }
+
+  async indentWbs(wbsId: string): Promise<Wbs | undefined> {
+    const current = this.wbs.get(wbsId);
+    if (!current) {
+      throw new Error("WBS item not found");
+    }
+    
+    // Find the previous sibling at the same level to become the new parent
+    const siblings = Array.from(this.wbs.values())
+      .filter(w => 
+        w.projectId === current.projectId && 
+        w.level === current.level && 
+        w.parentId === current.parentId
+      )
+      .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+    
+    const currentIndex = siblings.findIndex(s => s.id === wbsId);
+    if (currentIndex <= 0) {
+      throw new Error("Cannot indent: no previous sibling to become parent");
+    }
+    
+    const newParent = siblings[currentIndex - 1];
+    
+    // Get new sequence number as the last child of the new parent
+    const newSiblings = await this.getWbsChildren(newParent.id);
+    const newSequenceNumber = newSiblings.length + 1;
+    
+    // Generate new WBS code
+    const newCode = await this.generateWbsCode(current.projectId, newParent.id);
+    
+    // Update the WBS item
+    const updated: Wbs = {
+      ...current,
+      parentId: newParent.id,
+      level: current.level + 1,
+      sequenceNumber: newSequenceNumber,
+      code: newCode
+    };
+    
+    this.wbs.set(wbsId, updated);
+    
+    // Update codes for all descendants
+    await this.updateDescendantCodesMemory(wbsId, newCode);
+    
+    return updated;
+  }
+
+  async outdentWbs(wbsId: string): Promise<Wbs | undefined> {
+    const current = this.wbs.get(wbsId);
+    if (!current) {
+      throw new Error("WBS item not found");
+    }
+    
+    // Cannot outdent root level items
+    if (!current.parentId) {
+      throw new Error("Cannot outdent root level item");
+    }
+    
+    // Get parent to find the new parent (grandparent)
+    const parent = this.wbs.get(current.parentId);
+    if (!parent) {
+      throw new Error("Parent WBS not found");
+    }
+    
+    const newParentId = parent.parentId; // Could be null (root level)
+    const newLevel = current.level - 1;
+    
+    // Get new sequence number at the new level
+    let newSequenceNumber: number;
+    if (newParentId) {
+      const newSiblings = await this.getWbsChildren(newParentId);
+      newSequenceNumber = newSiblings.length + 1;
+    } else {
+      // Moving to root level
+      const rootItems = Array.from(this.wbs.values())
+        .filter(w => w.projectId === current.projectId && !w.parentId)
+        .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+      newSequenceNumber = rootItems.length + 1;
+    }
+    
+    // Generate new WBS code
+    const newCode = await this.generateWbsCode(current.projectId, newParentId || undefined);
+    
+    // Update the WBS item
+    const updated: Wbs = {
+      ...current,
+      parentId: newParentId,
+      level: newLevel,
+      sequenceNumber: newSequenceNumber,
+      code: newCode
+    };
+    
+    this.wbs.set(wbsId, updated);
+    
+    // Update codes for all descendants
+    await this.updateDescendantCodesMemory(wbsId, newCode);
+    
+    return updated;
+  }
+
+  async reorderWbs(wbsId: string, newSequenceNumber: number): Promise<void> {
+    const current = this.wbs.get(wbsId);
+    if (!current) {
+      throw new Error("WBS item not found");
+    }
+    
+    const oldSequenceNumber = current.sequenceNumber;
+    
+    if (oldSequenceNumber === newSequenceNumber) {
+      return; // No change needed
+    }
+    
+    // Get all siblings
+    const siblings = Array.from(this.wbs.values())
+      .filter(w => 
+        w.projectId === current.projectId && 
+        w.level === current.level && 
+        w.parentId === current.parentId
+      )
+      .sort((a, b) => a.sequenceNumber - b.sequenceNumber);
+    
+    // Validate new sequence number
+    if (newSequenceNumber < 1 || newSequenceNumber > siblings.length) {
+      throw new Error("Invalid sequence number");
+    }
+    
+    // Update sequence numbers
+    if (newSequenceNumber < oldSequenceNumber) {
+      // Moving up - increment sequence numbers in between
+      for (const sibling of siblings) {
+        if (sibling.sequenceNumber >= newSequenceNumber && sibling.sequenceNumber < oldSequenceNumber) {
+          const updated = { ...sibling, sequenceNumber: sibling.sequenceNumber + 1 };
+          this.wbs.set(sibling.id, updated);
+        }
+      }
+    } else {
+      // Moving down - decrement sequence numbers in between
+      for (const sibling of siblings) {
+        if (sibling.sequenceNumber > oldSequenceNumber && sibling.sequenceNumber <= newSequenceNumber) {
+          const updated = { ...sibling, sequenceNumber: sibling.sequenceNumber - 1 };
+          this.wbs.set(sibling.id, updated);
+        }
+      }
+    }
+    
+    // Update the moved item
+    const updated = { ...current, sequenceNumber: newSequenceNumber };
+    this.wbs.set(wbsId, updated);
+  }
+
+  async validateWbsHierarchy(projectId: string): Promise<boolean> {
+    const wbsItems = await this.getWbsByProject(projectId);
+    
+    for (const item of wbsItems) {
+      // Check parent-child relationships
+      if (item.parentId) {
+        const parent = this.wbs.get(item.parentId);
+        if (!parent) {
+          console.error(`WBS item ${item.id} has invalid parent ${item.parentId}`);
+          return false;
+        }
+        
+        if (parent.level !== item.level - 1) {
+          console.error(`WBS item ${item.id} has incorrect level ${item.level} relative to parent level ${parent.level}`);
+          return false;
+        }
+      } else {
+        // Root level items should have level 0
+        if (item.level !== 0) {
+          console.error(`Root WBS item ${item.id} should have level 0, has level ${item.level}`);
+          return false;
+        }
+      }
+    }
+    
+    return true;
+  }
+
+  // Helper method to update descendant codes when parent code changes (for MemStorage)
+  private async updateDescendantCodesMemory(parentWbsId: string, newParentCode: string): Promise<void> {
+    const children = await this.getWbsChildren(parentWbsId);
+    
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i];
+      const newChildCode = `${newParentCode}.${i + 1}`;
+      
+      const updated = { ...child, code: newChildCode };
+      this.wbs.set(child.id, updated);
+      
+      // Recursively update descendants
+      await this.updateDescendantCodesMemory(child.id, newChildCode);
+    }
   }
 
   // Activities

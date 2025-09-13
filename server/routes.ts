@@ -147,7 +147,120 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true });
     } catch (error) {
       console.error("Error deleting WBS:", error);
-      res.status(500).json({ error: "Failed to delete WBS" });
+      if (error instanceof Error) {
+        res.status(400).json({ error: error.message });
+      } else {
+        res.status(500).json({ error: "Failed to delete WBS" });
+      }
+    }
+  });
+
+  // WBS Hierarchy Management
+  app.get("/api/projects/:projectId/wbs/hierarchy", async (req, res) => {
+    try {
+      const wbsHierarchy = await storage.getWbsHierarchy(req.params.projectId);
+      res.json(wbsHierarchy);
+    } catch (error) {
+      console.error("Error fetching WBS hierarchy:", error);
+      res.status(500).json({ error: "Failed to fetch WBS hierarchy" });
+    }
+  });
+
+  app.post("/api/wbs/:id/indent", async (req, res) => {
+    try {
+      const updatedWbs = await storage.indentWbs(req.params.id);
+      if (!updatedWbs) {
+        return res.status(404).json({ error: "WBS not found" });
+      }
+      res.json(updatedWbs);
+    } catch (error) {
+      console.error("Error indenting WBS:", error);
+      if (error instanceof Error) {
+        res.status(400).json({ error: error.message });
+      } else {
+        res.status(500).json({ error: "Failed to indent WBS" });
+      }
+    }
+  });
+
+  app.post("/api/wbs/:id/outdent", async (req, res) => {
+    try {
+      const updatedWbs = await storage.outdentWbs(req.params.id);
+      if (!updatedWbs) {
+        return res.status(404).json({ error: "WBS not found" });
+      }
+      res.json(updatedWbs);
+    } catch (error) {
+      console.error("Error outdenting WBS:", error);
+      if (error instanceof Error) {
+        res.status(400).json({ error: error.message });
+      } else {
+        res.status(500).json({ error: "Failed to outdent WBS" });
+      }
+    }
+  });
+
+  app.post("/api/wbs/:id/reorder", async (req, res) => {
+    try {
+      const { newSequenceNumber } = req.body;
+      if (typeof newSequenceNumber !== 'number') {
+        return res.status(400).json({ error: "newSequenceNumber must be a number" });
+      }
+      
+      await storage.reorderWbs(req.params.id, newSequenceNumber);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error reordering WBS:", error);
+      if (error instanceof Error) {
+        res.status(400).json({ error: error.message });
+      } else {
+        res.status(500).json({ error: "Failed to reorder WBS" });
+      }
+    }
+  });
+
+  app.get("/api/wbs/:id/children", async (req, res) => {
+    try {
+      const children = await storage.getWbsChildren(req.params.id);
+      res.json(children);
+    } catch (error) {
+      console.error("Error fetching WBS children:", error);
+      res.status(500).json({ error: "Failed to fetch WBS children" });
+    }
+  });
+
+  app.get("/api/wbs/:id/descendants", async (req, res) => {
+    try {
+      const descendants = await storage.getWbsDescendants(req.params.id);
+      res.json(descendants);
+    } catch (error) {
+      console.error("Error fetching WBS descendants:", error);
+      res.status(500).json({ error: "Failed to fetch WBS descendants" });
+    }
+  });
+
+  app.post("/api/projects/:projectId/wbs/generate-code", async (req, res) => {
+    try {
+      const { parentId } = req.body;
+      const code = await storage.generateWbsCode(req.params.projectId, parentId);
+      res.json({ code });
+    } catch (error) {
+      console.error("Error generating WBS code:", error);
+      if (error instanceof Error) {
+        res.status(400).json({ error: error.message });
+      } else {
+        res.status(500).json({ error: "Failed to generate WBS code" });
+      }
+    }
+  });
+
+  app.get("/api/projects/:projectId/wbs/validate", async (req, res) => {
+    try {
+      const isValid = await storage.validateWbsHierarchy(req.params.projectId);
+      res.json({ valid: isValid });
+    } catch (error) {
+      console.error("Error validating WBS hierarchy:", error);
+      res.status(500).json({ error: "Failed to validate WBS hierarchy" });
     }
   });
 
