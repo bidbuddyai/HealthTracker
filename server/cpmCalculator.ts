@@ -208,7 +208,27 @@ export class CPMCalculator {
   }
 
   /**
+   * Calculate working days between two dates according to calendar
+   */
+  private getWorkingDaysBetween(startDate: Date, endDate: Date, calendar: WorkingCalendar): number {
+    if (startDate >= endDate) return 0;
+    
+    let currentDate = new Date(startDate);
+    let workingDays = 0;
+    
+    while (currentDate < endDate) {
+      if (this.isWorkingDay(currentDate, calendar)) {
+        workingDays++;
+      }
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    return workingDays;
+  }
+
+  /**
    * Add working days to a date according to calendar
+   * For duration N, this adds N working days to the start date
    */
   private addWorkingDays(startDate: Date, duration: number, calendar: WorkingCalendar): Date {
     if (duration === 0) return new Date(startDate);
@@ -216,18 +236,12 @@ export class CPMCalculator {
     let currentDate = new Date(startDate);
     let daysAdded = 0;
     
-    // For start milestones and finish milestones, don't add duration
-    if (duration === 0) {
-      return currentDate;
-    }
-    
+    // Move to the next day first, then count working days
+    // This ensures consistency with getWorkingDaysBetween
     while (daysAdded < duration) {
+      currentDate.setDate(currentDate.getDate() + 1);
       if (this.isWorkingDay(currentDate, calendar)) {
         daysAdded++;
-      }
-      
-      if (daysAdded < duration) {
-        currentDate.setDate(currentDate.getDate() + 1);
       }
     }
     
@@ -236,6 +250,7 @@ export class CPMCalculator {
 
   /**
    * Subtract working days from a date according to calendar
+   * For duration N, this subtracts N working days from the end date
    */
   private subtractWorkingDays(endDate: Date, duration: number, calendar: WorkingCalendar): Date {
     if (duration === 0) return new Date(endDate);
@@ -243,6 +258,8 @@ export class CPMCalculator {
     let currentDate = new Date(endDate);
     let daysSubtracted = 0;
     
+    // Move backward and count working days
+    // This ensures consistency with addWorkingDays
     while (daysSubtracted < duration) {
       currentDate.setDate(currentDate.getDate() - 1);
       if (this.isWorkingDay(currentDate, calendar)) {
@@ -254,54 +271,35 @@ export class CPMCalculator {
   }
 
   /**
-   * Apply relationship logic to calculate dependent date
+   * Apply relationship logic to calculate dependent date for forward pass
    */
-  private applyRelationship(
+  private applyForwardRelationship(
     predecessorActivity: CalculatedActivity,
-    relationship: ParsedRelationship,
-    isForward: boolean
+    relationship: ParsedRelationship
   ): Date | null {
     const calendar = this.getCalendarForActivity(predecessorActivity);
     
     let baseDate: Date | null = null;
     
-    if (isForward) {
-      // Forward pass - calculate early dates
-      switch (relationship.type) {
-        case 'FS': // Finish-to-Start
-          baseDate = predecessorActivity.calculatedEarlyFinish;
-          break;
-        case 'SS': // Start-to-Start
-          baseDate = predecessorActivity.calculatedEarlyStart;
-          break;
-        case 'FF': // Finish-to-Finish
-          baseDate = predecessorActivity.calculatedEarlyFinish;
-          break;
-        case 'SF': // Start-to-Finish
-          baseDate = predecessorActivity.calculatedEarlyStart;
-          break;
-      }
-    } else {
-      // Backward pass - calculate late dates
-      switch (relationship.type) {
-        case 'FS': // Finish-to-Start
-          baseDate = predecessorActivity.calculatedLateFinish;
-          break;
-        case 'SS': // Start-to-Start
-          baseDate = predecessorActivity.calculatedLateStart;
-          break;
-        case 'FF': // Finish-to-Finish
-          baseDate = predecessorActivity.calculatedLateFinish;
-          break;
-        case 'SF': // Start-to-Finish
-          baseDate = predecessorActivity.calculatedLateStart;
-          break;
-      }
+    // Forward pass - calculate early dates from predecessor
+    switch (relationship.type) {
+      case 'FS': // Finish-to-Start
+        baseDate = predecessorActivity.calculatedEarlyFinish;
+        break;
+      case 'SS': // Start-to-Start
+        baseDate = predecessorActivity.calculatedEarlyStart;
+        break;
+      case 'FF': // Finish-to-Finish
+        baseDate = predecessorActivity.calculatedEarlyFinish;
+        break;
+      case 'SF': // Start-to-Finish
+        baseDate = predecessorActivity.calculatedEarlyStart;
+        break;
     }
     
     if (!baseDate) return null;
     
-    // Apply lag
+    // Apply lag (positive lag delays successor, negative lag advances it)
     if (relationship.lag !== 0) {
       if (relationship.lag > 0) {
         baseDate = this.addWorkingDays(baseDate, relationship.lag, calendar);
@@ -311,6 +309,95 @@ export class CPMCalculator {
     }
     
     return baseDate;
+  }
+
+  /**
+   * Calculate predecessor's late dates based on successor's late dates (backward pass)
+   */
+  private calculateBackwardDates(
+    successorActivity: CalculatedActivity,
+    relationship: ParsedRelationship,
+    predecessorActivity: CalculatedActivity
+  ): { lateStart: Date | null; lateFinish: Date | null } {
+    const calendar = this.getCalendarForActivity(predecessorActivity);
+    const duration = predecessorActivity.remainingDuration || predecessorActivity.originalDuration || 0;
+    
+    let predLateStart: Date | null = null;
+    let predLateFinish: Date | null = null;
+    
+    // Get successor's late dates
+    const succLateStart = successorActivity.calculatedLateStart;
+    const succLateFinish = successorActivity.calculatedLateFinish;
+    
+    if (!succLateStart || !succLateFinish) {
+      return { lateStart: null, lateFinish: null };
+    }
+    
+    // Calculate based on relationship type using proper CPM formulas
+    switch (relationship.type) {
+      case 'FS': // Finish-to-Start: pred.LF = succ.LS - lag; pred.LS = pred.LF - duration
+        {
+          let adjustedSuccLS = succLateStart;
+          // In backward pass, subtract lag from successor event
+          if (relationship.lag !== 0) {
+            if (relationship.lag > 0) {
+              adjustedSuccLS = this.subtractWorkingDays(succLateStart, relationship.lag, calendar);
+            } else {
+              adjustedSuccLS = this.addWorkingDays(succLateStart, Math.abs(relationship.lag), calendar);
+            }
+          }
+          predLateFinish = adjustedSuccLS;
+          predLateStart = this.subtractWorkingDays(predLateFinish, duration, calendar);
+        }
+        break;
+        
+      case 'SS': // Start-to-Start: pred.LS = succ.LS - lag; pred.LF = pred.LS + duration
+        {
+          let adjustedSuccLS = succLateStart;
+          if (relationship.lag !== 0) {
+            if (relationship.lag > 0) {
+              adjustedSuccLS = this.subtractWorkingDays(succLateStart, relationship.lag, calendar);
+            } else {
+              adjustedSuccLS = this.addWorkingDays(succLateStart, Math.abs(relationship.lag), calendar);
+            }
+          }
+          predLateStart = adjustedSuccLS;
+          predLateFinish = this.addWorkingDays(predLateStart, duration, calendar);
+        }
+        break;
+        
+      case 'FF': // Finish-to-Finish: pred.LF = succ.LF - lag; pred.LS = pred.LF - duration
+        {
+          let adjustedSuccLF = succLateFinish;
+          if (relationship.lag !== 0) {
+            if (relationship.lag > 0) {
+              adjustedSuccLF = this.subtractWorkingDays(succLateFinish, relationship.lag, calendar);
+            } else {
+              adjustedSuccLF = this.addWorkingDays(succLateFinish, Math.abs(relationship.lag), calendar);
+            }
+          }
+          predLateFinish = adjustedSuccLF;
+          predLateStart = this.subtractWorkingDays(predLateFinish, duration, calendar);
+        }
+        break;
+        
+      case 'SF': // Start-to-Finish: pred.LS = succ.LF - lag; pred.LF = pred.LS + duration
+        {
+          let adjustedSuccLF = succLateFinish;
+          if (relationship.lag !== 0) {
+            if (relationship.lag > 0) {
+              adjustedSuccLF = this.subtractWorkingDays(succLateFinish, relationship.lag, calendar);
+            } else {
+              adjustedSuccLF = this.addWorkingDays(succLateFinish, Math.abs(relationship.lag), calendar);
+            }
+          }
+          predLateStart = adjustedSuccLF;
+          predLateFinish = this.addWorkingDays(predLateStart, duration, calendar);
+        }
+        break;
+    }
+    
+    return { lateStart: predLateStart, lateFinish: predLateFinish };
   }
 
   /**
@@ -480,7 +567,7 @@ export class CPMCalculator {
           const predecessorActivity = this.activities.get(rel.predecessorId);
           if (!predecessorActivity) return;
           
-          const dependentDate = this.applyRelationship(predecessorActivity, rel, true);
+          const dependentDate = this.applyForwardRelationship(predecessorActivity, rel);
           
           if (dependentDate) {
             if (rel.type === 'FS' || rel.type === 'SS') {
@@ -533,7 +620,7 @@ export class CPMCalculator {
   }
 
   /**
-   * Perform backward pass to calculate late dates
+   * Perform backward pass to calculate late dates using correct CPM formulas
    */
   private backwardPass() {
     const processed = new Set<string>();
@@ -556,7 +643,7 @@ export class CPMCalculator {
       
       const calendar = this.getCalendarForActivity(activity);
       
-      // Get all successors
+      // Get all successors where this activity is the predecessor
       const successorRelationships = this.relationships.filter(r => r.predecessorId === activityId);
       
       // Process all successors first
@@ -564,43 +651,39 @@ export class CPMCalculator {
         processActivity(rel.successorId);
       });
       
-      let lateFinish: Date | null = null;
-      let lateStart: Date | null = null;
-      
       if (successorRelationships.length === 0) {
-        // No successors - use early finish as late finish
-        lateFinish = activity.calculatedEarlyFinish || projectEndDate;
+        // No successors - this is an end activity, use early finish as late finish
+        activity.calculatedLateFinish = activity.calculatedEarlyFinish || projectEndDate;
+        const duration = activity.remainingDuration || activity.originalDuration || 0;
+        activity.calculatedLateStart = this.subtractWorkingDays(activity.calculatedLateFinish, duration, calendar);
       } else {
-        // Calculate based on successors
+        // Calculate late dates based on all successors using proper CPM formulas
+        let minLateStart: Date | null = null;
+        let minLateFinish: Date | null = null;
+        
         successorRelationships.forEach(rel => {
           const successorActivity = this.activities.get(rel.successorId);
           if (!successorActivity) return;
           
-          const dependentDate = this.applyRelationship(successorActivity, rel, false);
+          // Calculate this activity's late dates based on successor's late dates
+          const backwardDates = this.calculateBackwardDates(successorActivity, rel, activity);
           
-          if (dependentDate) {
-            if (rel.type === 'FS' || rel.type === 'FF') {
-              // These affect finish date
-              if (!lateFinish || dependentDate < lateFinish) {
-                lateFinish = dependentDate;
-              }
-            } else if (rel.type === 'SS' || rel.type === 'SF') {
-              // These affect start date
-              const duration = activity.remainingDuration || activity.originalDuration || 0;
-              const calculatedFinish = this.addWorkingDays(dependentDate, duration, calendar);
-              
-              if (!lateFinish || calculatedFinish < lateFinish) {
-                lateFinish = calculatedFinish;
-              }
+          if (backwardDates.lateStart && backwardDates.lateFinish) {
+            // Take the minimum (most constraining) dates from all successors
+            if (!minLateStart || backwardDates.lateStart < minLateStart) {
+              minLateStart = backwardDates.lateStart;
+            }
+            if (!minLateFinish || backwardDates.lateFinish < minLateFinish) {
+              minLateFinish = backwardDates.lateFinish;
             }
           }
         });
-      }
-      
-      if (lateFinish) {
-        activity.calculatedLateFinish = lateFinish;
-        const duration = activity.remainingDuration || activity.originalDuration || 0;
-        activity.calculatedLateStart = this.subtractWorkingDays(lateFinish, duration, calendar);
+        
+        // Set the calculated late dates
+        if (minLateStart && minLateFinish) {
+          activity.calculatedLateStart = minLateStart;
+          activity.calculatedLateFinish = minLateFinish;
+        }
       }
       
       // Apply constraints to late dates

@@ -38,7 +38,9 @@ import {
   Edit,
   Trash2,
   FolderTree,
-  Settings
+  Settings,
+  Calculator,
+  Zap
 } from "lucide-react";
 
 interface ScheduleGridProps {
@@ -70,7 +72,10 @@ export default function ScheduleGrid({
     duration: true,
     earlyStart: true,
     earlyFinish: true,
+    lateStart: false,
+    lateFinish: false,
     totalFloat: true,
+    freeFloat: false,
     status: true,
     predecessors: true,
     constraints: true,
@@ -204,6 +209,29 @@ export default function ScheduleGrid({
     onError: (error: any) => {
       toast({ 
         title: "Failed to outdent WBS item", 
+        description: error.message || "An error occurred",
+        variant: "destructive" 
+      });
+    }
+  });
+
+  // CPM Calculation Mutation
+  const calculateCPMMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest('POST', `/api/projects/${projectId}/calculate-schedule`, {});
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'activities'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/projects', projectId, 'relationships'] });
+      toast({ 
+        title: "CPM Schedule Calculated",
+        description: `Critical path updated. ${data.results?.criticalPath?.length || 0} critical activities identified.`
+      });
+    },
+    onError: (error: any) => {
+      toast({ 
+        title: "Failed to calculate schedule", 
         description: error.message || "An error occurred",
         variant: "destructive" 
       });
@@ -465,6 +493,17 @@ export default function ScheduleGrid({
           </CardTitle>
           <div className="flex items-center space-x-2">
             <Button 
+              onClick={() => calculateCPMMutation.mutate()}
+              disabled={calculateCPMMutation.isPending}
+              size="sm" 
+              variant="default"
+              className="bg-blue-600 hover:bg-blue-700"
+              data-testid="button-calculate-cpm"
+            >
+              <Calculator className="w-4 h-4 mr-2" />
+              {calculateCPMMutation.isPending ? "Calculating..." : "Calculate CPM"}
+            </Button>
+            <Button 
               onClick={() => setShowWbsManager(!showWbsManager)} 
               size="sm" 
               variant={showWbsManager ? "default" : "outline"}
@@ -594,8 +633,17 @@ export default function ScheduleGrid({
                 {showColumns.earlyFinish && (
                   <TableHead className="w-24">Early Finish</TableHead>
                 )}
+                {showColumns.lateStart && (
+                  <TableHead className="w-24">Late Start</TableHead>
+                )}
+                {showColumns.lateFinish && (
+                  <TableHead className="w-24">Late Finish</TableHead>
+                )}
                 {showColumns.totalFloat && (
-                  <TableHead className="w-20">Float</TableHead>
+                  <TableHead className="w-20">Total Float</TableHead>
+                )}
+                {showColumns.freeFloat && (
+                  <TableHead className="w-20">Free Float</TableHead>
                 )}
                 {showColumns.status && (
                   <TableHead className="w-24">Status</TableHead>
@@ -737,13 +785,27 @@ export default function ScheduleGrid({
                   {showColumns.earlyFinish && (
                     <TableCell>{formatDate(activity.earlyFinish)}</TableCell>
                   )}
+                  {showColumns.lateStart && (
+                    <TableCell className="text-sm text-gray-600">{formatDate(activity.lateStart)}</TableCell>
+                  )}
+                  {showColumns.lateFinish && (
+                    <TableCell className="text-sm text-gray-600">{formatDate(activity.lateFinish)}</TableCell>
+                  )}
                   {showColumns.totalFloat && (
                     <TableCell>
-                      <div className={`font-medium ${
+                      <div className={`font-medium flex items-center space-x-1 ${
                         activity.isCritical ? 'text-red-600' : 
                         (activity.totalFloat || 0) <= 5 ? 'text-orange-600' : 'text-green-600'
                       }`}>
-                        {activity.totalFloat !== null ? `${activity.totalFloat}d` : '-'}
+                        {activity.isCritical && <Zap className="w-3 h-3" />}
+                        <span>{activity.totalFloat !== null ? `${activity.totalFloat}d` : '-'}</span>
+                      </div>
+                    </TableCell>
+                  )}
+                  {showColumns.freeFloat && (
+                    <TableCell>
+                      <div className="text-sm text-blue-600 font-medium">
+                        {activity.freeFloat !== null ? `${activity.freeFloat}d` : '-'}
                       </div>
                     </TableCell>
                   )}

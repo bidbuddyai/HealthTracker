@@ -1031,7 +1031,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // CPM Calculation Engine - Advanced Scheduling Features
-  app.post("/api/projects/:projectId/calculate-schedule", async (req, res) => {
+  app.post("/api/projects/:projectId/calculate-schedule", isAuthenticated, requireProjectAccess, async (req, res) => {
     try {
       const { retainedLogic = true, dataDate } = req.body;
       
@@ -1053,16 +1053,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
       );
       
       // Run comprehensive CPM calculation with advanced features
-      const results = calculator.calculate();
+      const calculatedActivities = calculator.calculate();
+      const criticalPath = calculator.getCriticalPath();
+      const constraintViolations = calculator.getConstraintViolations();
+      
+      // Calculate project metrics
+      let projectStartDate: Date | null = null;
+      let projectFinishDate: Date | null = null;
+      let totalActivities = calculatedActivities.length;
+      let criticalActivities = criticalPath.length;
+      
+      calculatedActivities.forEach(activity => {
+        if (activity.calculatedEarlyStart) {
+          if (!projectStartDate || activity.calculatedEarlyStart < projectStartDate) {
+            projectStartDate = activity.calculatedEarlyStart;
+          }
+        }
+        if (activity.calculatedEarlyFinish) {
+          if (!projectFinishDate || activity.calculatedEarlyFinish > projectFinishDate) {
+            projectFinishDate = activity.calculatedEarlyFinish;
+          }
+        }
+      });
+      
+      const projectDuration = projectStartDate && projectFinishDate 
+        ? Math.ceil((projectFinishDate.getTime() - projectStartDate.getTime()) / (1000 * 60 * 60 * 24))
+        : 0;
+      
+      // Update activities in database with calculated values
+      for (const activity of calculatedActivities) {
+        await storage.updateActivity(activity.id, {
+          earlyStart: activity.calculatedEarlyStart?.toISOString().split('T')[0] || null,
+          earlyFinish: activity.calculatedEarlyFinish?.toISOString().split('T')[0] || null,
+          lateStart: activity.calculatedLateStart?.toISOString().split('T')[0] || null,
+          lateFinish: activity.calculatedLateFinish?.toISOString().split('T')[0] || null,
+          totalFloat: activity.calculatedTotalFloat,
+          freeFloat: activity.calculatedFreeFloat,
+          isCritical: activity.calculatedIsCritical
+        });
+      }
       
       res.json({
         success: true,
         results: {
-          activities: results.activities,
-          criticalPath: results.criticalPath,
-          projectDuration: results.projectDuration,
-          constraintViolations: results.constraintViolations,
-          scheduleMetrics: results.scheduleMetrics,
+          activities: calculatedActivities,
+          criticalPath: criticalPath,
+          projectDuration: projectDuration,
+          constraintViolations: constraintViolations,
+          scheduleMetrics: {
+            totalActivities,
+            criticalActivities,
+            schedulePerformanceIndex: criticalActivities > 0 ? (totalActivities - criticalActivities) / totalActivities : 1,
+            projectStartDate: projectStartDate?.toISOString().split('T')[0],
+            projectFinishDate: projectFinishDate?.toISOString().split('T')[0],
+            averageFloat: calculatedActivities.reduce((sum, act) => sum + (act.calculatedTotalFloat || 0), 0) / totalActivities
+          },
           retainedLogic,
           calculatedAt: new Date().toISOString()
         }

@@ -97,20 +97,21 @@ export default function ProjectDetail() {
   // Calculate critical path mutation
   const calculateCriticalPathMutation = useMutation({
     mutationFn: async () => {
-      const response = await apiRequest("POST", `/api/projects/${id}/calculate-critical-path`, {});
+      const response = await apiRequest("POST", `/api/projects/${id}/calculate-schedule`, {});
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects", id, "activities"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id, "relationships"] });
       toast({
-        title: "Critical Path Calculated",
-        description: "The schedule has been recalculated with the latest activity data.",
+        title: "CPM Schedule Calculated",
+        description: `Critical path updated. ${data.results?.criticalPath?.length || 0} critical activities identified.`,
       });
     },
     onError: () => {
       toast({
         title: "Error",
-        description: "Failed to calculate critical path. Please try again.",
+        description: "Failed to calculate schedule. Please try again.",
         variant: "destructive",
       });
     },
@@ -505,6 +506,7 @@ export default function ProjectDetail() {
                 activities={activities}
                 relationships={relationships}
                 wbs={wbs}
+                projectId={id!}
                 onActivitySelect={handleActivitySelect}
                 onNewActivity={handleNewActivity}
               />
