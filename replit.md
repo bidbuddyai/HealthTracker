@@ -1,6 +1,6 @@
 # Overview
 
-ScheduleSam is a sophisticated CPM (Critical Path Method) scheduling application comparable to industry standards like MS Project and Primavera P6. The system provides comprehensive project scheduling capabilities including advanced activity types, WBS hierarchy management, activity codes, custom fields, and AI-powered scheduling assistance. Now featuring enterprise-grade authentication via Replit Auth with full user management, session handling, and secure multi-user access control.
+ScheduleSam is a sophisticated CPM (Critical Path Method) scheduling application comparable to industry standards like MS Project and Primavera P6. The system provides comprehensive project scheduling capabilities including advanced activity types, WBS hierarchy management, activity codes, custom fields, and AI-powered scheduling assistance. Now featuring enterprise-grade authentication via Replit Auth with full user management, session handling, and secure multi-user access control. The AI assistant can now manage work calendars, WBS structures, and Time Impact Analysis through natural language commands.
 
 # User Preferences
 
@@ -24,6 +24,7 @@ Preferred communication style: Simple, everyday language.
 - **Progress Tracking**: Comprehensive progress management with percent complete, actual dates, and remaining duration updates
 - **Baseline Management**: Multiple named baselines with snapshot capture, variance tracking, and color-coded schedule slippage visualization
 - **Time Impact Analysis (TIA)**: Enterprise-grade TIA system with delay modeling, fragnet insertion, what-if scenarios, schedule compression analysis, and recovery planning
+- **Work Calendars**: Complete calendar management system with workweek patterns, shifts, exceptions, and assignments to activities and resources
 - **Collaboration Tools**: Threaded comments on activities, file attachments via object storage, role-based access control (Owner, Scheduler, Manager, Viewer, Contributor)
 - **Audit Trail System**: Complete change tracking with timestamps, user attribution, and detailed change logs for all schedule modifications
 - **Version History**: Schedule versioning with auto-save capabilities, complete snapshot storage, and version restoration functionality
@@ -56,10 +57,16 @@ Preferred communication style: Simple, everyday language.
 
 ## AI Integration Architecture
 - **LLM Provider**: Poe's OpenAI-compatible API endpoint (https://api.poe.com/v1)
-- **Function Calling**: Custom app-level implementation since Poe doesn't support native tool calling
-- **Assistant Tools**: Structured JSON schema for meeting operations (insertActionItems, createRFI, updateAgendaDiscussion, distributeMinutes, summarizeMeeting)
+- **Function Calling**: Comprehensive app-level implementation with 40+ scheduling tools
+- **Assistant Tools**: Full scheduler operations including:
+  - **Calendar Management**: createCalendar, updateCalendar, deleteCalendar, addCalendarException, assignCalendar, createShift
+  - **WBS Operations**: createWbs, updateWbs, deleteWbs, moveWbs, assignActivityToWbs, calculateWbsRollups, exportWbs
+  - **TIA Analysis**: createTiaScenario, addTiaFragnet, addTiaDelay, runTiaAnalysis, getTiaResult, compareTiaScenarios, generateTiaReport
+  - **Activity Management**: createActivity, updateActivity, linkActivities, assignResources, updateProgress
+  - **Meeting Operations**: insertActionItems, createRFI, updateAgendaDiscussion, distributeMinutes, summarizeMeeting
 - **Model Support**: Multiple models including gemini-2.5-pro, Claude-Sonnet-4, Grok-4, Llama-3.1-405B
 - **Streaming**: OpenAI-compatible streaming responses for real-time interactions
+- **Natural Language Processing**: AI can understand and execute complex scheduling commands like "Create a 5-day work calendar with US holidays" or "Analyze 10-day delay impact on concrete pour"
 
 ## Time Impact Analysis Architecture
 - **TIA Calculation Engine**: Advanced schedule impact calculator with fragnet insertion, delay modeling, and float consumption analysis
