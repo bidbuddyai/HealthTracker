@@ -361,6 +361,159 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // WBS Export functionality
+  app.get("/api/projects/:projectId/wbs/export/:format", isAuthenticated, requireProjectAccess, async (req, res) => {
+    try {
+      const { projectId, format } = req.params;
+      const wbs = await storage.getWbsHierarchy(projectId);
+      const activities = await storage.getActivitiesByProject(projectId);
+      const project = await storage.getProject(projectId);
+      
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      // Build WBS tree with activities for export
+      const buildExportTree = (items: Wbs[]): any[] => {
+        const nodeMap = new Map<string, any>();
+        const rootNodes: any[] = [];
+
+        // Create nodes with activity data
+        items.forEach(item => {
+          const itemActivities = activities.filter((a: Activity) => a.wbsId === item.id);
+          const node = {
+            id: item.id,
+            code: item.code,
+            name: item.name,
+            level: item.level,
+            sequenceNumber: item.sequenceNumber,
+            activityCount: itemActivities.length,
+            totalCost: itemActivities.reduce((sum: number, a: Activity) => sum + (a.plannedCost || 0), 0),
+            progress: itemActivities.length > 0 
+              ? Math.round(itemActivities.reduce((sum: number, a: Activity) => sum + (a.percentComplete || 0), 0) / itemActivities.length)
+              : 0,
+            activities: itemActivities,
+            children: []
+          };
+          nodeMap.set(item.id, node);
+        });
+
+        // Build hierarchy
+        items.forEach(item => {
+          const node = nodeMap.get(item.id)!;
+          if (item.parentId) {
+            const parent = nodeMap.get(item.parentId);
+            if (parent) {
+              parent.children.push(node);
+            } else {
+              rootNodes.push(node);
+            }
+          } else {
+            rootNodes.push(node);
+          }
+        });
+
+        return rootNodes;
+      };
+
+      const wbsTree = buildExportTree(wbs);
+
+      switch (format) {
+        case 'json':
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Content-Disposition', `attachment; filename="${project.name}_wbs.json"`);
+          res.json({
+            project: {
+              id: project.id,
+              name: project.name,
+              description: project.description
+            },
+            wbs: wbsTree,
+            exportDate: new Date().toISOString()
+          });
+          break;
+
+        case 'csv':
+          res.setHeader('Content-Type', 'text/csv');
+          res.setHeader('Content-Disposition', `attachment; filename="${project.name}_wbs.csv"`);
+          
+          // Generate CSV
+          const csvRows = ['Code,Name,Level,Parent Code,Activity Count,Total Cost ($),Progress (%)'];
+          
+          const flattenForCsv = (nodes: any[], parentCode = ''): void => {
+            nodes.forEach(node => {
+              csvRows.push([
+                node.code,
+                `"${node.name.replace(/"/g, '""')}"`,
+                node.level,
+                parentCode || 'ROOT',
+                node.activityCount,
+                Math.round(node.totalCost),
+                node.progress
+              ].join(','));
+              
+              if (node.children.length > 0) {
+                flattenForCsv(node.children, node.code);
+              }
+            });
+          };
+          
+          flattenForCsv(wbsTree);
+          res.send(csvRows.join('\n'));
+          break;
+
+        case 'xml':
+          res.setHeader('Content-Type', 'text/xml');
+          res.setHeader('Content-Disposition', `attachment; filename="${project.name}_wbs.xml"`);
+          
+          // Generate simple XML
+          const generateXml = (nodes: any[], indent = 0): string => {
+            let xml = '';
+            const spaces = '  '.repeat(indent);
+            
+            nodes.forEach(node => {
+              xml += `${spaces}<WBSItem>\n`;
+              xml += `${spaces}  <Code>${node.code}</Code>\n`;
+              xml += `${spaces}  <Name>${node.name}</Name>\n`;
+              xml += `${spaces}  <Level>${node.level}</Level>\n`;
+              xml += `${spaces}  <ActivityCount>${node.activityCount}</ActivityCount>\n`;
+              xml += `${spaces}  <TotalCost>${node.totalCost}</TotalCost>\n`;
+              xml += `${spaces}  <Progress>${node.progress}</Progress>\n`;
+              
+              if (node.children.length > 0) {
+                xml += `${spaces}  <Children>\n`;
+                xml += generateXml(node.children, indent + 2);
+                xml += `${spaces}  </Children>\n`;
+              }
+              
+              xml += `${spaces}</WBSItem>\n`;
+            });
+            
+            return xml;
+          };
+          
+          const xmlContent = `<?xml version="1.0" encoding="UTF-8"?>
+<Project>
+  <Name>${project.name}</Name>
+  <Description>${project.description || ''}</Description>
+  <ExportDate>${new Date().toISOString()}</ExportDate>
+  <WBS>
+${generateXml(wbsTree, 2)}
+  </WBS>
+</Project>`;
+          
+          res.send(xmlContent);
+          break;
+
+        default:
+          res.status(400).json({ error: "Invalid export format. Use 'json', 'csv', or 'xml'." });
+      }
+    } catch (error) {
+      console.error("Error exporting WBS:", error);
+      res.status(500).json({ error: "Failed to export WBS" });
+    }
+  });
+
   // Activities
   app.get("/api/projects/:projectId/activities", isAuthenticated, async (req, res) => {
     try {

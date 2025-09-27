@@ -395,12 +395,47 @@ export default function WBSTree({ wbs: initialWbs, activities, projectId }: WBST
     setEditingWbs(null);
   };
 
-  const handleExport = (format: "json" | "csv" | "xml") => {
-    // Export functionality would be implemented here
-    toast({
-      title: "Export",
-      description: `Exporting WBS in ${format.toUpperCase()} format...`,
-    });
+  const handleExport = async (format: "json" | "csv" | "xml") => {
+    try {
+      const response = await fetch(`/api/projects/${projectId}/wbs/export/${format}`, {
+        method: "GET",
+        credentials: "include",
+      });
+
+      if (!response.ok) {
+        throw new Error(`Export failed: ${response.statusText}`);
+      }
+
+      // Get the filename from the Content-Disposition header
+      const contentDisposition = response.headers.get("Content-Disposition");
+      const filenameMatch = contentDisposition?.match(/filename="(.+)"/);
+      const filename = filenameMatch ? filenameMatch[1] : `wbs_export.${format}`;
+
+      // Create a blob from the response
+      const blob = await response.blob();
+      
+      // Create a download link and click it
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      toast({
+        title: "Export Successful",
+        description: `WBS exported as ${format.toUpperCase()} successfully`,
+      });
+    } catch (error) {
+      console.error("Export error:", error);
+      toast({
+        title: "Export Failed",
+        description: `Failed to export WBS in ${format.toUpperCase()} format`,
+        variant: "destructive",
+      });
+    }
   };
 
   const renderNode = (node: WBSNode, depth: number = 0) => {
