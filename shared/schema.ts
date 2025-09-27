@@ -79,15 +79,69 @@ export const activityCodes = pgTable("activity_codes", {
   color: text("color")
 });
 
-// Calendars
+// Calendars - Enhanced calendar management system
 export const calendars = pgTable("calendars", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   projectId: varchar("project_id").references(() => projects.id),
   name: text("name").notNull(),
   type: calendarTypeEnum("type").notNull(),
-  standardWorkweek: jsonb("standard_workweek"), // Array of working days and hours
-  holidays: jsonb("holidays"), // Array of holiday dates
-  exceptions: jsonb("exceptions") // Array of exception dates with custom hours
+  description: text("description"),
+  isDefault: boolean("is_default").default(false),
+  workHoursPerDay: real("work_hours_per_day").default(8),
+  workDaysPerWeek: integer("work_days_per_week").default(5),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull()
+});
+
+// Calendar Week Patterns - Define standard working days
+export const calendarWeekPatterns = pgTable("calendar_week_patterns", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  calendarId: varchar("calendar_id").references(() => calendars.id).notNull(),
+  dayOfWeek: integer("day_of_week").notNull(), // 0=Sunday, 6=Saturday
+  isWorkingDay: boolean("is_working_day").default(true),
+  startTime: text("start_time"), // Format: "08:00"
+  endTime: text("end_time"), // Format: "17:00"
+  breakStartTime: text("break_start_time"), // Optional lunch break
+  breakEndTime: text("break_end_time")
+});
+
+// Calendar Exceptions - Holidays and special dates
+export const calendarExceptions = pgTable("calendar_exceptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  calendarId: varchar("calendar_id").references(() => calendars.id).notNull(),
+  exceptionDate: text("exception_date").notNull(), // ISO date format
+  exceptionType: text("exception_type").notNull(), // "Holiday", "NonWorkingDay", "ModifiedHours"
+  name: text("name"), // e.g., "Christmas Day", "Maintenance Window"
+  isRecurring: boolean("is_recurring").default(false),
+  recurringRule: text("recurring_rule"), // For annual holidays
+  startTime: text("start_time"), // For modified hours
+  endTime: text("end_time"), // For modified hours
+  shiftId: varchar("shift_id") // Reference to a shift template
+});
+
+// Calendar Assignments - Link calendars to projects/resources/activities
+export const calendarAssignments = pgTable("calendar_assignments", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  calendarId: varchar("calendar_id").references(() => calendars.id).notNull(),
+  entityType: text("entity_type").notNull(), // "Project", "Resource", "Activity"
+  entityId: varchar("entity_id").notNull(),
+  effectiveFrom: text("effective_from"),
+  effectiveTo: text("effective_to"),
+  priority: integer("priority").default(1) // For handling multiple calendars
+});
+
+// Calendar Shifts - Shift templates for rotating schedules
+export const calendarShifts = pgTable("calendar_shifts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").references(() => projects.id),
+  name: text("name").notNull(), // e.g., "Day Shift", "Night Shift"
+  code: text("code"), // e.g., "DS", "NS"
+  startTime: text("start_time").notNull(),
+  endTime: text("end_time").notNull(),
+  breakStartTime: text("break_start_time"),
+  breakEndTime: text("break_end_time"),
+  workHours: real("work_hours"),
+  color: text("color") // For visual identification
 });
 
 // Activities (Main scheduling table)
@@ -406,7 +460,11 @@ export const scheduleVersions = pgTable("schedule_versions", {
 export const insertProjectSchema = createInsertSchema(projects).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertWbsSchema = createInsertSchema(wbs).omit({ id: true });
 export const insertActivityCodeSchema = createInsertSchema(activityCodes).omit({ id: true });
-export const insertCalendarSchema = createInsertSchema(calendars).omit({ id: true });
+export const insertCalendarSchema = createInsertSchema(calendars).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertCalendarWeekPatternSchema = createInsertSchema(calendarWeekPatterns).omit({ id: true });
+export const insertCalendarExceptionSchema = createInsertSchema(calendarExceptions).omit({ id: true });
+export const insertCalendarAssignmentSchema = createInsertSchema(calendarAssignments).omit({ id: true });
+export const insertCalendarShiftSchema = createInsertSchema(calendarShifts).omit({ id: true });
 export const insertActivitySchema = createInsertSchema(activities).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertRelationshipSchema = createInsertSchema(relationships).omit({ id: true });
 export const insertResourceSchema = createInsertSchema(resources).omit({ id: true });
@@ -434,6 +492,14 @@ export type ActivityCode = typeof activityCodes.$inferSelect;
 export type InsertActivityCode = z.infer<typeof insertActivityCodeSchema>;
 export type Calendar = typeof calendars.$inferSelect;
 export type InsertCalendar = z.infer<typeof insertCalendarSchema>;
+export type CalendarWeekPattern = typeof calendarWeekPatterns.$inferSelect;
+export type InsertCalendarWeekPattern = z.infer<typeof insertCalendarWeekPatternSchema>;
+export type CalendarException = typeof calendarExceptions.$inferSelect;
+export type InsertCalendarException = z.infer<typeof insertCalendarExceptionSchema>;
+export type CalendarAssignment = typeof calendarAssignments.$inferSelect;
+export type InsertCalendarAssignment = z.infer<typeof insertCalendarAssignmentSchema>;
+export type CalendarShift = typeof calendarShifts.$inferSelect;
+export type InsertCalendarShift = z.infer<typeof insertCalendarShiftSchema>;
 export type Activity = typeof activities.$inferSelect;
 export type InsertActivity = z.infer<typeof insertActivitySchema>;
 export type Relationship = typeof relationships.$inferSelect;

@@ -1,7 +1,9 @@
 import { randomUUID } from "crypto";
 import type {
   Project, InsertProject, Activity, InsertActivity, Wbs, InsertWbs,
-  Calendar, InsertCalendar, Relationship, InsertRelationship,
+  Calendar, InsertCalendar, CalendarWeekPattern, InsertCalendarWeekPattern,
+  CalendarException, InsertCalendarException, CalendarAssignment, InsertCalendarAssignment,
+  CalendarShift, InsertCalendarShift, Relationship, InsertRelationship,
   Resource, InsertResource, ResourceAssignment, InsertResourceAssignment,
   Baseline, InsertBaseline, TiaScenario, InsertTiaScenario,
   TiaFragnet, InsertTiaFragnet, TiaDelay, InsertTiaDelay,
@@ -66,6 +68,33 @@ export interface IStorage {
   createCalendar(calendar: InsertCalendar): Promise<Calendar>;
   updateCalendar(id: string, updates: Partial<Calendar>): Promise<Calendar | undefined>;
   deleteCalendar(id: string): Promise<boolean>;
+  getDefaultCalendar(projectId: string): Promise<Calendar | undefined>;
+  
+  // Calendar Week Patterns
+  getCalendarWeekPatterns(calendarId: string): Promise<CalendarWeekPattern[]>;
+  createCalendarWeekPattern(pattern: InsertCalendarWeekPattern): Promise<CalendarWeekPattern>;
+  updateCalendarWeekPattern(id: string, updates: Partial<CalendarWeekPattern>): Promise<CalendarWeekPattern | undefined>;
+  deleteCalendarWeekPattern(id: string): Promise<boolean>;
+  
+  // Calendar Exceptions
+  getCalendarExceptions(calendarId: string): Promise<CalendarException[]>;
+  createCalendarException(exception: InsertCalendarException): Promise<CalendarException>;
+  updateCalendarException(id: string, updates: Partial<CalendarException>): Promise<CalendarException | undefined>;
+  deleteCalendarException(id: string): Promise<boolean>;
+  
+  // Calendar Assignments
+  getCalendarAssignments(calendarId: string): Promise<CalendarAssignment[]>;
+  getCalendarAssignmentsByEntity(entityType: string, entityId: string): Promise<CalendarAssignment[]>;
+  createCalendarAssignment(assignment: InsertCalendarAssignment): Promise<CalendarAssignment>;
+  updateCalendarAssignment(id: string, updates: Partial<CalendarAssignment>): Promise<CalendarAssignment | undefined>;
+  deleteCalendarAssignment(id: string): Promise<boolean>;
+  
+  // Calendar Shifts
+  getCalendarShifts(projectId: string | null): Promise<CalendarShift[]>;
+  getCalendarShift(id: string): Promise<CalendarShift | undefined>;
+  createCalendarShift(shift: InsertCalendarShift): Promise<CalendarShift>;
+  updateCalendarShift(id: string, updates: Partial<CalendarShift>): Promise<CalendarShift | undefined>;
+  deleteCalendarShift(id: string): Promise<boolean>;
   
   // Resources
   getResourcesByProject(projectId: string): Promise<Resource[]>;
@@ -152,6 +181,10 @@ export class MemStorage implements IStorage {
   private activities = new Map<string, Activity>();
   private relationships = new Map<string, Relationship>();
   private calendars = new Map<string, Calendar>();
+  private calendarWeekPatterns = new Map<string, CalendarWeekPattern>();
+  private calendarExceptions = new Map<string, CalendarException>();
+  private calendarAssignments = new Map<string, CalendarAssignment>();
+  private calendarShifts = new Map<string, CalendarShift>();
   private resources = new Map<string, Resource>();
   private resourceAssignments = new Map<string, ResourceAssignment>();
   private baselines = new Map<string, Baseline>();
@@ -878,11 +911,33 @@ export class MemStorage implements IStorage {
       ...insertCalendar,
       id,
       projectId: insertCalendar.projectId ?? null,
-      standardWorkweek: insertCalendar.standardWorkweek ?? null,
-      holidays: insertCalendar.holidays ?? null,
-      exceptions: insertCalendar.exceptions ?? null
+      description: insertCalendar.description ?? null,
+      isDefault: insertCalendar.isDefault ?? false,
+      workHoursPerDay: insertCalendar.workHoursPerDay ?? 8,
+      workDaysPerWeek: insertCalendar.workDaysPerWeek ?? 5,
+      createdAt: new Date(),
+      updatedAt: new Date()
     };
     this.calendars.set(id, calendar);
+    
+    // Create default week patterns if this is a new calendar
+    if (insertCalendar.workDaysPerWeek === 5 || !insertCalendar.workDaysPerWeek) {
+      // Standard 5-day work week
+      for (let day = 0; day <= 6; day++) {
+        const pattern: CalendarWeekPattern = {
+          id: randomUUID(),
+          calendarId: id,
+          dayOfWeek: day,
+          isWorkingDay: day >= 1 && day <= 5, // Mon-Fri
+          startTime: day >= 1 && day <= 5 ? "08:00" : null,
+          endTime: day >= 1 && day <= 5 ? "17:00" : null,
+          breakStartTime: day >= 1 && day <= 5 ? "12:00" : null,
+          breakEndTime: day >= 1 && day <= 5 ? "13:00" : null
+        };
+        this.calendarWeekPatterns.set(pattern.id, pattern);
+      }
+    }
+    
     return calendar;
   }
 
@@ -895,7 +950,174 @@ export class MemStorage implements IStorage {
   }
 
   async deleteCalendar(id: string): Promise<boolean> {
+    // Delete associated patterns, exceptions, assignments
+    for (const [patternId, pattern] of this.calendarWeekPatterns) {
+      if (pattern.calendarId === id) {
+        this.calendarWeekPatterns.delete(patternId);
+      }
+    }
+    for (const [exceptionId, exception] of this.calendarExceptions) {
+      if (exception.calendarId === id) {
+        this.calendarExceptions.delete(exceptionId);
+      }
+    }
+    for (const [assignmentId, assignment] of this.calendarAssignments) {
+      if (assignment.calendarId === id) {
+        this.calendarAssignments.delete(assignmentId);
+      }
+    }
     return this.calendars.delete(id);
+  }
+
+  async getDefaultCalendar(projectId: string): Promise<Calendar | undefined> {
+    return Array.from(this.calendars.values()).find(c => 
+      c.projectId === projectId && c.isDefault
+    );
+  }
+
+  // Calendar Week Patterns
+  async getCalendarWeekPatterns(calendarId: string): Promise<CalendarWeekPattern[]> {
+    return Array.from(this.calendarWeekPatterns.values())
+      .filter(p => p.calendarId === calendarId)
+      .sort((a, b) => a.dayOfWeek - b.dayOfWeek);
+  }
+
+  async createCalendarWeekPattern(pattern: InsertCalendarWeekPattern): Promise<CalendarWeekPattern> {
+    const id = randomUUID();
+    const newPattern: CalendarWeekPattern = {
+      ...pattern,
+      id,
+      isWorkingDay: pattern.isWorkingDay ?? true,
+      startTime: pattern.startTime ?? null,
+      endTime: pattern.endTime ?? null,
+      breakStartTime: pattern.breakStartTime ?? null,
+      breakEndTime: pattern.breakEndTime ?? null
+    };
+    this.calendarWeekPatterns.set(id, newPattern);
+    return newPattern;
+  }
+
+  async updateCalendarWeekPattern(id: string, updates: Partial<CalendarWeekPattern>): Promise<CalendarWeekPattern | undefined> {
+    const existing = this.calendarWeekPatterns.get(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...updates };
+    this.calendarWeekPatterns.set(id, updated);
+    return updated;
+  }
+
+  async deleteCalendarWeekPattern(id: string): Promise<boolean> {
+    return this.calendarWeekPatterns.delete(id);
+  }
+
+  // Calendar Exceptions
+  async getCalendarExceptions(calendarId: string): Promise<CalendarException[]> {
+    return Array.from(this.calendarExceptions.values())
+      .filter(e => e.calendarId === calendarId)
+      .sort((a, b) => a.exceptionDate.localeCompare(b.exceptionDate));
+  }
+
+  async createCalendarException(exception: InsertCalendarException): Promise<CalendarException> {
+    const id = randomUUID();
+    const newException: CalendarException = {
+      ...exception,
+      id,
+      name: exception.name ?? null,
+      isRecurring: exception.isRecurring ?? false,
+      recurringRule: exception.recurringRule ?? null,
+      startTime: exception.startTime ?? null,
+      endTime: exception.endTime ?? null,
+      shiftId: exception.shiftId ?? null
+    };
+    this.calendarExceptions.set(id, newException);
+    return newException;
+  }
+
+  async updateCalendarException(id: string, updates: Partial<CalendarException>): Promise<CalendarException | undefined> {
+    const existing = this.calendarExceptions.get(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...updates };
+    this.calendarExceptions.set(id, updated);
+    return updated;
+  }
+
+  async deleteCalendarException(id: string): Promise<boolean> {
+    return this.calendarExceptions.delete(id);
+  }
+
+  // Calendar Assignments
+  async getCalendarAssignments(calendarId: string): Promise<CalendarAssignment[]> {
+    return Array.from(this.calendarAssignments.values())
+      .filter(a => a.calendarId === calendarId);
+  }
+
+  async getCalendarAssignmentsByEntity(entityType: string, entityId: string): Promise<CalendarAssignment[]> {
+    return Array.from(this.calendarAssignments.values())
+      .filter(a => a.entityType === entityType && a.entityId === entityId)
+      .sort((a, b) => (b.priority ?? 1) - (a.priority ?? 1)); // Higher priority first
+  }
+
+  async createCalendarAssignment(assignment: InsertCalendarAssignment): Promise<CalendarAssignment> {
+    const id = randomUUID();
+    const newAssignment: CalendarAssignment = {
+      ...assignment,
+      id,
+      effectiveFrom: assignment.effectiveFrom ?? null,
+      effectiveTo: assignment.effectiveTo ?? null,
+      priority: assignment.priority ?? 1
+    };
+    this.calendarAssignments.set(id, newAssignment);
+    return newAssignment;
+  }
+
+  async updateCalendarAssignment(id: string, updates: Partial<CalendarAssignment>): Promise<CalendarAssignment | undefined> {
+    const existing = this.calendarAssignments.get(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...updates };
+    this.calendarAssignments.set(id, updated);
+    return updated;
+  }
+
+  async deleteCalendarAssignment(id: string): Promise<boolean> {
+    return this.calendarAssignments.delete(id);
+  }
+
+  // Calendar Shifts
+  async getCalendarShifts(projectId: string | null): Promise<CalendarShift[]> {
+    return Array.from(this.calendarShifts.values()).filter(s => 
+      projectId === null ? s.projectId === null : s.projectId === projectId
+    );
+  }
+
+  async getCalendarShift(id: string): Promise<CalendarShift | undefined> {
+    return this.calendarShifts.get(id);
+  }
+
+  async createCalendarShift(shift: InsertCalendarShift): Promise<CalendarShift> {
+    const id = randomUUID();
+    const newShift: CalendarShift = {
+      ...shift,
+      id,
+      projectId: shift.projectId ?? null,
+      code: shift.code ?? null,
+      breakStartTime: shift.breakStartTime ?? null,
+      breakEndTime: shift.breakEndTime ?? null,
+      workHours: shift.workHours ?? null,
+      color: shift.color ?? null
+    };
+    this.calendarShifts.set(id, newShift);
+    return newShift;
+  }
+
+  async updateCalendarShift(id: string, updates: Partial<CalendarShift>): Promise<CalendarShift | undefined> {
+    const existing = this.calendarShifts.get(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...updates };
+    this.calendarShifts.set(id, updated);
+    return updated;
+  }
+
+  async deleteCalendarShift(id: string): Promise<boolean> {
+    return this.calendarShifts.delete(id);
   }
 
   // Resources

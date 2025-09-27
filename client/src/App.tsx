@@ -10,6 +10,7 @@ import Projects from "@/pages/projects";
 import ProjectDetail from "@/pages/project-detail";
 import Landing from "@/pages/Landing";
 import Calendar from "@/pages/calendar";
+import Calendars from "@/pages/calendars";
 import { TimeImpactAnalysis } from "@/pages/time-impact-analysis";
 import { useAuth } from "@/hooks/useAuth";
 
@@ -27,6 +28,8 @@ function Router() {
           <Route path="/project/:id" component={ProjectDetail} />
           <Route path="/project/:projectId/tia" component={TimeImpactAnalysis} />
           <Route path="/calendar" component={Calendar} />
+          <Route path="/calendars" component={Calendars} />
+          <Route path="/project/:projectId/calendars" component={Calendars} />
         </>
       )}
       <Route component={NotFound} />
