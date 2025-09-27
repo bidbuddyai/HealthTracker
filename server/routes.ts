@@ -191,6 +191,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.patch("/api/projects/:projectId/wbs/:id", isAuthenticated, requireProjectAccess, async (req, res) => {
+    try {
+      const wbs = await storage.updateWbs(req.params.id, req.body);
+      if (!wbs) {
+        return res.status(404).json({ error: "WBS not found" });
+      }
+      res.json(wbs);
+    } catch (error) {
+      console.error("Error updating WBS:", error);
+      res.status(500).json({ error: "Failed to update WBS" });
+    }
+  });
+
+  app.patch("/api/projects/:projectId/wbs/:id/move", isAuthenticated, requireProjectAccess, async (req, res) => {
+    try {
+      const { newParentId } = req.body;
+      const wbs = await storage.updateWbs(req.params.id, { parentId: newParentId });
+      if (!wbs) {
+        return res.status(404).json({ error: "WBS not found" });
+      }
+      res.json(wbs);
+    } catch (error) {
+      console.error("Error moving WBS:", error);
+      res.status(500).json({ error: "Failed to move WBS" });
+    }
+  });
+
+  app.delete("/api/projects/:projectId/wbs/:id", isAuthenticated, requireProjectAccess, async (req, res) => {
+    try {
+      const success = await storage.deleteWbs(req.params.id);
+      if (!success) {
+        return res.status(404).json({ error: "WBS not found" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting WBS:", error);
+      if (error instanceof Error) {
+        res.status(400).json({ error: error.message });
+      } else {
+        res.status(500).json({ error: "Failed to delete WBS" });
+      }
+    }
+  });
+
   app.delete("/api/wbs/:id", isAuthenticated, requireWbsAccess, async (req, res) => {
     try {
       const success = await storage.deleteWbs(req.params.id);
