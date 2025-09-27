@@ -23,6 +23,7 @@ Preferred communication style: Simple, everyday language.
 - **Constraint Handling**: Advanced constraint types (SNET, SNLT, FNET, FNLT, MSO, MFO) with violation detection and reporting
 - **Progress Tracking**: Comprehensive progress management with percent complete, actual dates, and remaining duration updates
 - **Baseline Management**: Multiple named baselines with snapshot capture, variance tracking, and color-coded schedule slippage visualization
+- **Time Impact Analysis (TIA)**: Enterprise-grade TIA system with delay modeling, fragnet insertion, what-if scenarios, schedule compression analysis, and recovery planning
 - **Collaboration Tools**: Threaded comments on activities, file attachments via object storage, role-based access control (Owner, Scheduler, Manager, Viewer, Contributor)
 - **Audit Trail System**: Complete change tracking with timestamps, user attribution, and detailed change logs for all schedule modifications
 - **Version History**: Schedule versioning with auto-save capabilities, complete snapshot storage, and version restoration functionality
@@ -47,8 +48,9 @@ Preferred communication style: Simple, everyday language.
 - **Schema**: Comprehensive Drizzle ORM schema with PostgreSQL including:
   - **Authentication Tables**: Users and sessions for Replit Auth (mandatory tables)
   - **Project Management**: Projects, activities, WBS, calendars, relationships
+  - **Time Impact Analysis**: TIA scenarios, fragnets, delays, and analysis results
   - **Collaboration**: Comments, attachments, audit logs, project members
-  - **Scheduling**: Baselines, TIA scenarios, resource assignments, schedule versions
+  - **Scheduling**: Baselines, resource assignments, schedule versions
 - **Migration Strategy**: Drizzle Kit for database migrations with `npm run db:push`
 - **Current State**: PostgreSQL database active with authentication tables deployed
 
@@ -58,6 +60,13 @@ Preferred communication style: Simple, everyday language.
 - **Assistant Tools**: Structured JSON schema for meeting operations (insertActionItems, createRFI, updateAgendaDiscussion, distributeMinutes, summarizeMeeting)
 - **Model Support**: Multiple models including gemini-2.5-pro, Claude-Sonnet-4, Grok-4, Llama-3.1-405B
 - **Streaming**: OpenAI-compatible streaming responses for real-time interactions
+
+## Time Impact Analysis Architecture
+- **TIA Calculation Engine**: Advanced schedule impact calculator with fragnet insertion, delay modeling, and float consumption analysis
+- **Scenario Management**: Support for multiple TIA scenario types (delay analysis, acceleration, what-if, recovery planning)
+- **Impact Types**: EOT claims, disruption analysis, change order impacts, weather delays
+- **Analysis Features**: Critical path changes, float erosion tracking, milestone impact assessment, schedule compression opportunities
+- **Recovery Planning**: Pace analysis, fast-tracking opportunities, crashing options, shift work recommendations
 
 ## Meeting Workflow Architecture
 - **Sequential Meetings**: Automatic meeting numbering and carry-forward logic for action items
