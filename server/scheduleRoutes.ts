@@ -298,20 +298,11 @@ ${fileContent}`;
       const projectActivities = await storage.getActivitiesByProject(projectId);
       const projectRelationships = await storage.getRelationshipsByProject(projectId);
       
-      console.log('🔍 MSP Export Debug - Activities from storage:', {
-        projectId,
-        activitiesCount: projectActivities.length,
-        relationshipsCount: projectRelationships.length,
-        sampleActivity: projectActivities[0] || null
-      });
-      
       if (projectActivities.length === 0) {
         return res.status(404).json({ error: "No activities found for this project" });
       }
       
       // Build and validate predecessor/successor maps using DependencyValidator
-      console.log('🔍 Building validated predecessor/successor maps...');
-      
       // First convert storage activities to ScheduleActivity format for validation
       const activitiesForValidation: ScheduleActivity[] = projectActivities.map(act => {
         // Build initial predecessor list from relationships
@@ -346,13 +337,8 @@ ${fileContent}`;
       const { DependencyValidator } = await import('./scheduleExporter');
       
       // CRITICAL FIX: Validate dependencies and break cycles completely
-      console.log('🔍 Running comprehensive dependency validation with cycle breaking...');
-      
       // Step 1: Validate logical sequence first
       const logicalCheck = DependencyValidator.validateLogicalSequence(activitiesForValidation);
-      if (logicalCheck.warnings.length > 0) {
-        console.warn('⚠️ Logical sequence issues detected:', logicalCheck.warnings.slice(0, 10));
-      }
       
       // Step 2: Apply logical validation to activities
       const logicallyValidatedActivities = activitiesForValidation.map(act => ({
@@ -365,21 +351,11 @@ ${fileContent}`;
       
       // CRITICAL: Block export if cycles still exist after breaking attempts
       if (circularCheck.hasCircularDependencies) {
-        console.error('❌ CRITICAL: Export blocked due to unresolvable circular dependencies!');
-        console.error('❌ Remaining circular nodes:', circularCheck.circularNodes);
-        
         return res.status(422).json({ 
           error: "Export blocked due to circular dependencies",
           details: `Circular dependencies detected in activities: ${circularCheck.circularNodes.join(', ')}. These relationships create infinite loops and cannot be exported to a valid schedule file.`,
           circularNodes: circularCheck.circularNodes,
           removedEdges: circularCheck.removedEdges
-        });
-      }
-      
-      if (circularCheck.removedEdges.length > 0) {
-        console.warn('🔄 Cycle breaking removed', circularCheck.removedEdges.length, 'problematic edges:');
-        circularCheck.removedEdges.slice(0, 5).forEach(edge => {
-          console.warn(`  ❌ ${edge.from} -> ${edge.to}: ${edge.reason}`);
         });
       }
       
@@ -399,16 +375,7 @@ ${fileContent}`;
         });
       });
       
-      console.log('✅ Validated predecessor/successor maps built with cycle breaking:', {
-        activitiesProcessed: activitiesForValidation.length,
-        logicalWarnings: logicalCheck.warnings.length,
-        cyclesRemoved: circularCheck.removedEdges.length,
-        finalValidatedRelationships: Array.from(predMap.values()).reduce((sum, preds) => sum + preds.length, 0),
-        guaranteedAcyclic: !circularCheck.hasCircularDependencies
-      });
-      
       // Convert to ScheduleActivity format for export using validated relationships
-      console.log('🔄 MSP Export Debug - Converting to ScheduleActivity format with validated relationships...');
       const scheduleActivities: ScheduleActivity[] = projectActivities.map(act => ({
         id: act.id,
         scheduleId: 'direct-export',
@@ -427,11 +394,6 @@ ${fileContent}`;
         notes: act.notes
       }));
       
-      console.log('✅ MSP Export Debug - ScheduleActivities created:', {
-        count: scheduleActivities.length,
-        sampleScheduleActivity: scheduleActivities[0] || null
-      });
-      
       // Create ProjectSchedule for export
       const schedule: ProjectSchedule = {
         id: 'export-schedule',
@@ -445,26 +407,12 @@ ${fileContent}`;
       };
       
       // Export using the schedule exporter
-      console.log('🚀 MSP Export Debug - Calling exportSchedule with:', {
-        format,
-        scheduleId: schedule.id,
-        activitiesCount: scheduleActivities.length,
-        projectName: project.name
-      });
-      
       const exportResult = await exportSchedule(
         format as 'xer' | 'xml' | 'pdf' | 'csv' | 'json',
         schedule,
         scheduleActivities,
         project.name
       );
-      
-      console.log('📄 MSP Export Debug - Export result:', {
-        contentLength: exportResult.content.length,
-        mimeType: exportResult.mimeType,
-        filename: exportResult.filename,
-        contentPreview: exportResult.content.substring(0, 500) + '...'
-      });
       
       // Set appropriate headers
       res.setHeader('Content-Type', exportResult.mimeType);

@@ -485,7 +485,15 @@ export class MSProjectXMLExporter {
   }
   
   private formatDateForMSP(dateStr: string, time: string = '08:00:00'): string {
-    return `${dateStr}T${time}`;
+    // MS Project expects dates in ISO 8601 format with timezone
+    // Format: YYYY-MM-DDTHH:MM:SS
+    const date = new Date(`${dateStr}T${time}`);
+    if (isNaN(date.getTime())) {
+      // Fallback to simple concatenation if date parsing fails
+      return `${dateStr}T${time}`;
+    }
+    // Return ISO format without milliseconds
+    return date.toISOString().split('.')[0];
   }
   
   /**
@@ -601,9 +609,7 @@ export class MSProjectXMLExporter {
     const { schedule, activities, projectName } = data;
     const projectGUID = this.generateGUID();
     
-    
     // Validate dependencies before export to prevent circular dependencies
-    
     // Step 1: Validate logical sequence first
     const logicalCheck = DependencyValidator.validateLogicalSequence(activities);
     
@@ -619,13 +625,11 @@ export class MSProjectXMLExporter {
       throw new Error(`Export blocked: Circular dependencies detected in activities: ${circularCheck.circularNodes.join(', ')}. Cannot create valid Microsoft Project file.`);
     }
     
-    
     // Step 4: Use cycle-broken predecessors for export (CRITICAL FIX)
     const validatedActivities = activities.map(act => ({
       ...act,
       predecessors: (circularCheck.validPredecessorMap.get(act.activityId) || []).join(',')
     }));
-    
     
     // Calculate proper project date span from all activities
     const fallbackStartDate = schedule.startDate || new Date().toISOString().split('T')[0];
@@ -635,9 +639,8 @@ export class MSProjectXMLExporter {
     const { validStartDate: validProjectStart, validFinishDate: validProjectFinish } = 
       this.validateDateRange(projectStart, projectFinish);
     
-    
     let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
-    xml += '<Project xmlns="http://schemas.microsoft.com/project">\n';
+    xml += '<Project xmlns="http://schemas.microsoft.com/project/2003">\n';
     
     // Essential Project properties with all required metadata
     xml += '  <GUID>' + projectGUID + '</GUID>\n';
@@ -737,10 +740,9 @@ export class MSProjectXMLExporter {
     const summaryDurationFormat = `PT${summaryDurationHours}H0M0S`;
     
     // Root summary task with validated project dates that span all activities
-    
     xml += '    <Task>\n';
-    xml += '      <UID>0</UID>\n';
-    xml += '      <ID>0</ID>\n';
+    xml += '      <UID>1</UID>\n';
+    xml += '      <ID>1</ID>\n';
     xml += '      <Name>' + this.escapeXml(projectName || 'Project') + '</Name>\n';
     xml += '      <Type>1</Type>\n';
     xml += '      <IsNull>0</IsNull>\n';
@@ -814,17 +816,11 @@ export class MSProjectXMLExporter {
     xml += '    </Task>\n';
     
     // Individual activity tasks using validated dependencies
-    console.log('🔄 MSProjectXMLExporter Debug - Processing validated activities:', validatedActivities.length);
     validatedActivities.forEach((act, index) => {
-      console.log(`📝 Processing activity ${index + 1}/${activities.length}:`, {
-        activityId: act.activityId,
-        activityName: act.activityName,
-        originalDuration: act.originalDuration,
-        startDate: act.startDate
-      });
-      const uid = index + 1;
-      const durationDays = act.originalDuration || 1;
-      const durationHours = durationDays * 8; // 8 hours per working day
+      const uid = index + 2; // Start from UID 2 since summary task is UID 1
+      const durationDays = act.originalDuration || 0; // Use 0 for undefined duration
+      const isMilestone = durationDays === 0;
+      const durationHours = isMilestone ? 0 : (durationDays * 8); // 0 hours for milestones, 8 hours per working day for tasks
       
       // Calculate and validate activity dates
       const rawStartDate = act.startDate || validProjectStart;
@@ -833,14 +829,6 @@ export class MSProjectXMLExporter {
       // Validate activity date range with duration context for milestone handling
       const { validStartDate: activityStartDate, validFinishDate: activityFinishDate } = 
         this.validateDateRange(rawStartDate, rawFinishDate, durationDays);
-      
-      console.log(`📅 Activity ${act.activityId} dates validated:`, {
-        rawStart: rawStartDate,
-        rawFinish: rawFinishDate,
-        validStart: activityStartDate,
-        validFinish: activityFinishDate,
-        duration: durationDays
-      });
       
       const remainingDuration = act.remainingDuration || durationDays;
       const percentComplete = this.getPercentComplete(act.status || 'Not Started');
@@ -868,7 +856,7 @@ export class MSProjectXMLExporter {
       xml += '      <Recurring>0</Recurring>\n';
       xml += '      <OverAllocated>0</OverAllocated>\n';
       xml += '      <Estimated>1</Estimated>\n';
-      xml += '      <Milestone>' + (durationDays === 0 ? '1' : '0') + '</Milestone>\n';
+      xml += '      <Milestone>' + (isMilestone ? '1' : '0') + '</Milestone>\n';
       xml += '      <Summary>0</Summary>\n';
       xml += '      <Critical>' + ((act.totalFloat || 0) === 0 ? '1' : '0') + '</Critical>\n';
       xml += '      <IsSubproject>0</IsSubproject>\n';
@@ -939,41 +927,27 @@ export class MSProjectXMLExporter {
       // Add validated predecessor links (circular dependencies have been removed)
       if (act.predecessors && act.predecessors.trim()) {
         const predList = act.predecessors.split(',').filter(p => p.trim());
-        console.log(`🔗 Activity ${act.activityId} validated predecessors:`, predList);
         
         predList.forEach(pred => {
           const predIndex = validatedActivities.findIndex(a => a.activityId === pred.trim());
           if (predIndex >= 0 && predIndex !== index) { // Prevent self-reference
             xml += '      <PredecessorLink>\n';
-            xml += '        <PredecessorUID>' + (predIndex + 1) + '</PredecessorUID>\n';
+            xml += '        <PredecessorUID>' + (predIndex + 2) + '</PredecessorUID>\n'; // +2 because activities start from UID 2
             xml += '        <Type>1</Type>\n'; // 1 = Finish-to-Start
             xml += '        <CrossProject>0</CrossProject>\n';
             xml += '        <LinkLag>0</LinkLag>\n';
             xml += '        <LagFormat>7</LagFormat>\n';
             xml += '      </PredecessorLink>\n';
-            console.log(`✅ Added valid predecessor: ${pred.trim()} -> ${act.activityId}`);
-          } else if (predIndex === index) {
-            console.warn(`⚠️ Prevented self-reference for activity ${act.activityId}`);
-          } else {
-            console.warn(`⚠️ Predecessor ${pred.trim()} not found for activity ${act.activityId}`);
           }
+          // Silently skip self-references and not-found predecessors
         });
       }
       
       xml += '    </Task>\n';
-      console.log(`✅ Generated XML for activity ${act.activityId} (${index + 1}/${activities.length})`);
     });
-    
-    console.log('🎯 MSProjectXMLExporter Debug - Completed processing all activities');
     
     xml += '  </Tasks>\n';
     xml += '</Project>\n';
-    
-    console.log('📊 MSProjectXMLExporter Debug - Final XML stats:', {
-      totalXmlLength: xml.length,
-      taskSections: (xml.match(/<Task>/g) || []).length,
-      projectSections: (xml.match(/<Project>/g) || []).length
-    });
     
     return xml;
   }
