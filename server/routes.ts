@@ -772,6 +772,134 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Time Impact Analysis (TIA) Scenarios
+  app.get("/api/projects/:projectId/tia-scenarios", isAuthenticated, requireProjectAccess, async (req, res) => {
+    try {
+      const scenarios = await storage.getTiaScenariosByProject(req.params.projectId);
+      res.json(scenarios);
+    } catch (error) {
+      console.error("Error fetching TIA scenarios:", error);
+      res.status(500).json({ error: "Failed to fetch TIA scenarios" });
+    }
+  });
+
+  app.get("/api/tia-scenarios/:id", isAuthenticated, async (req, res) => {
+    try {
+      const scenario = await storage.getTiaScenario(req.params.id);
+      if (!scenario) {
+        return res.status(404).json({ error: "TIA scenario not found" });
+      }
+      res.json(scenario);
+    } catch (error) {
+      console.error("Error fetching TIA scenario:", error);
+      res.status(500).json({ error: "Failed to fetch TIA scenario" });
+    }
+  });
+
+  app.post("/api/projects/:projectId/tia-scenarios", isAuthenticated, requireProjectAccess, async (req: any, res) => {
+    try {
+      const scenarioData = insertTiaScenarioSchema.parse({
+        ...req.body,
+        projectId: req.params.projectId,
+        createdBy: req.user?.claims?.sub
+      });
+      const scenario = await storage.createTiaScenario(scenarioData);
+      res.json(scenario);
+    } catch (error) {
+      console.error("Error creating TIA scenario:", error);
+      if (error instanceof z.ZodError) {
+        res.status(400).json({ error: "Invalid scenario data", details: error.errors });
+      } else {
+        res.status(500).json({ error: "Failed to create TIA scenario" });
+      }
+    }
+  });
+
+  app.put("/api/tia-scenarios/:id", isAuthenticated, async (req, res) => {
+    try {
+      const scenario = await storage.updateTiaScenario(req.params.id, req.body);
+      if (!scenario) {
+        return res.status(404).json({ error: "TIA scenario not found" });
+      }
+      res.json(scenario);
+    } catch (error) {
+      console.error("Error updating TIA scenario:", error);
+      res.status(500).json({ error: "Failed to update TIA scenario" });
+    }
+  });
+
+  app.delete("/api/tia-scenarios/:id", isAuthenticated, async (req, res) => {
+    try {
+      const success = await storage.deleteTiaScenario(req.params.id);
+      if (!success) {
+        return res.status(404).json({ error: "TIA scenario not found" });
+      }
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting TIA scenario:", error);
+      res.status(500).json({ error: "Failed to delete TIA scenario" });
+    }
+  });
+
+  // TIA Fragnets  
+  app.get("/api/tia-scenarios/:scenarioId/fragnets", isAuthenticated, async (req, res) => {
+    try {
+      const fragnets = await storage.getTiaFragnetsByScenario(req.params.scenarioId);
+      res.json(fragnets);
+    } catch (error) {
+      console.error("Error fetching TIA fragnets:", error);
+      res.status(500).json({ error: "Failed to fetch TIA fragnets" });
+    }
+  });
+
+  app.post("/api/tia-scenarios/:scenarioId/fragnets", isAuthenticated, async (req, res) => {
+    try {
+      const fragnet = await storage.createTiaFragnet({
+        ...req.body,
+        scenarioId: req.params.scenarioId
+      });
+      res.json(fragnet);
+    } catch (error) {
+      console.error("Error creating TIA fragnet:", error);
+      res.status(500).json({ error: "Failed to create TIA fragnet" });
+    }
+  });
+
+  // TIA Delays
+  app.get("/api/tia-scenarios/:scenarioId/delays", isAuthenticated, async (req, res) => {
+    try {
+      const delays = await storage.getTiaDelaysByScenario(req.params.scenarioId);
+      res.json(delays);
+    } catch (error) {
+      console.error("Error fetching TIA delays:", error);
+      res.status(500).json({ error: "Failed to fetch TIA delays" });
+    }
+  });
+
+  app.post("/api/tia-scenarios/:scenarioId/delays", isAuthenticated, async (req, res) => {
+    try {
+      const delay = await storage.createTiaDelay({
+        ...req.body,
+        scenarioId: req.params.scenarioId
+      });
+      res.json(delay);
+    } catch (error) {
+      console.error("Error creating TIA delay:", error);
+      res.status(500).json({ error: "Failed to create TIA delay" });
+    }
+  });
+
+  // TIA Analysis
+  app.post("/api/tia-scenarios/:scenarioId/analyze", isAuthenticated, async (req, res) => {
+    try {
+      const result = await storage.calculateTiaImpact(req.params.scenarioId);
+      res.json(result);
+    } catch (error) {
+      console.error("Error analyzing TIA impact:", error);
+      res.status(500).json({ error: "Failed to analyze TIA impact" });
+    }
+  });
+
   // Activity Comments
   app.get("/api/activities/:activityId/comments", async (req, res) => {
     try {

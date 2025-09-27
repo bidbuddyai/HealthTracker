@@ -96,6 +96,26 @@ export interface IStorage {
   updateTiaScenario(id: string, updates: Partial<TiaScenario>): Promise<TiaScenario | undefined>;
   deleteTiaScenario(id: string): Promise<boolean>;
   
+  // TIA Fragnets
+  getTiaFragnetsByScenario(scenarioId: string): Promise<TiaFragnet[]>;
+  getTiaFragnet(id: string): Promise<TiaFragnet | undefined>;
+  createTiaFragnet(fragnet: InsertTiaFragnet): Promise<TiaFragnet>;
+  updateTiaFragnet(id: string, updates: Partial<TiaFragnet>): Promise<TiaFragnet | undefined>;
+  deleteTiaFragnet(id: string): Promise<boolean>;
+  
+  // TIA Delays
+  getTiaDelaysByScenario(scenarioId: string): Promise<TiaDelay[]>;
+  getTiaDelay(id: string): Promise<TiaDelay | undefined>;
+  createTiaDelay(delay: InsertTiaDelay): Promise<TiaDelay>;
+  updateTiaDelay(id: string, updates: Partial<TiaDelay>): Promise<TiaDelay | undefined>;
+  deleteTiaDelay(id: string): Promise<boolean>;
+  
+  // TIA Results
+  getTiaResultsByScenario(scenarioId: string): Promise<TiaResult[]>;
+  getTiaResult(id: string): Promise<TiaResult | undefined>;
+  createTiaResult(result: InsertTiaResult): Promise<TiaResult>;
+  calculateTiaImpact(scenarioId: string): Promise<TiaResult>;
+  
   // Schedule Updates
   getScheduleUpdatesByProject(projectId: string): Promise<ScheduleUpdate[]>;
   getScheduleUpdate(id: string): Promise<ScheduleUpdate | undefined>;
@@ -1138,6 +1158,137 @@ export class MemStorage implements IStorage {
 
   async deleteTiaScenario(id: string): Promise<boolean> {
     return this.tiaScenarios.delete(id);
+  }
+  
+  // TIA Fragnets
+  async getTiaFragnetsByScenario(scenarioId: string): Promise<TiaFragnet[]> {
+    return Array.from(this.tiaFragnets.values()).filter(f => f.scenarioId === scenarioId);
+  }
+
+  async getTiaFragnet(id: string): Promise<TiaFragnet | undefined> {
+    return this.tiaFragnets.get(id);
+  }
+
+  async createTiaFragnet(insertFragnet: InsertTiaFragnet): Promise<TiaFragnet> {
+    const id = randomUUID();
+    const fragnet: TiaFragnet = {
+      ...insertFragnet,
+      id,
+      description: insertFragnet.description ?? null,
+      insertionPoint: insertFragnet.insertionPoint ?? null,
+      activities: insertFragnet.activities ?? null,
+      relationships: insertFragnet.relationships ?? null,
+      linkedActivities: insertFragnet.linkedActivities ?? null
+    };
+    this.tiaFragnets.set(id, fragnet);
+    return fragnet;
+  }
+
+  async updateTiaFragnet(id: string, updates: Partial<TiaFragnet>): Promise<TiaFragnet | undefined> {
+    const existing = this.tiaFragnets.get(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...updates };
+    this.tiaFragnets.set(id, updated);
+    return updated;
+  }
+
+  async deleteTiaFragnet(id: string): Promise<boolean> {
+    return this.tiaFragnets.delete(id);
+  }
+  
+  // TIA Delays
+  async getTiaDelaysByScenario(scenarioId: string): Promise<TiaDelay[]> {
+    return Array.from(this.tiaDelays.values()).filter(d => d.scenarioId === scenarioId);
+  }
+
+  async getTiaDelay(id: string): Promise<TiaDelay | undefined> {
+    return this.tiaDelays.get(id);
+  }
+
+  async createTiaDelay(insertDelay: InsertTiaDelay): Promise<TiaDelay> {
+    const id = randomUUID();
+    const delay: TiaDelay = {
+      ...insertDelay,
+      id,
+      fragnetId: insertDelay.fragnetId ?? null,
+      startDate: insertDelay.startDate ?? null,
+      endDate: insertDelay.endDate ?? null,
+      description: insertDelay.description ?? null,
+      evidence: insertDelay.evidence ?? null
+    };
+    this.tiaDelays.set(id, delay);
+    return delay;
+  }
+
+  async updateTiaDelay(id: string, updates: Partial<TiaDelay>): Promise<TiaDelay | undefined> {
+    const existing = this.tiaDelays.get(id);
+    if (!existing) return undefined;
+    const updated = { ...existing, ...updates };
+    this.tiaDelays.set(id, updated);
+    return updated;
+  }
+
+  async deleteTiaDelay(id: string): Promise<boolean> {
+    return this.tiaDelays.delete(id);
+  }
+  
+  // TIA Results
+  async getTiaResultsByScenario(scenarioId: string): Promise<TiaResult[]> {
+    return Array.from(this.tiaResults.values()).filter(r => r.scenarioId === scenarioId);
+  }
+
+  async getTiaResult(id: string): Promise<TiaResult | undefined> {
+    return this.tiaResults.get(id);
+  }
+
+  async createTiaResult(insertResult: InsertTiaResult): Promise<TiaResult> {
+    const id = randomUUID();
+    const result: TiaResult = {
+      ...insertResult,
+      id,
+      impactedFinishDate: insertResult.impactedFinishDate ?? null,
+      unimpactedFinishDate: insertResult.unimpactedFinishDate ?? null,
+      netImpactDays: insertResult.netImpactDays ?? null,
+      criticalPathChanges: insertResult.criticalPathChanges ?? null,
+      floatErosion: insertResult.floatErosion ?? null,
+      affectedMilestones: insertResult.affectedMilestones ?? null,
+      analysisDate: new Date()
+    };
+    this.tiaResults.set(id, result);
+    return result;
+  }
+  
+  async calculateTiaImpact(scenarioId: string): Promise<TiaResult> {
+    // Get the scenario and its delays
+    const scenario = await this.getTiaScenario(scenarioId);
+    if (!scenario) throw new Error("Scenario not found");
+    
+    const delays = await this.getTiaDelaysByScenario(scenarioId);
+    const fragnets = await this.getTiaFragnetsByScenario(scenarioId);
+    const activities = await this.getActivitiesByProject(scenario.projectId);
+    
+    // Simple TIA calculation (will be replaced with advanced logic later)
+    const totalDelayDays = delays.reduce((sum, delay) => sum + (delay.delayDays || 0), 0);
+    const currentFinish = activities.reduce((latest, act) => {
+      const finish = act.earlyFinish ? new Date(act.earlyFinish) : new Date();
+      return finish > latest ? finish : latest;
+    }, new Date());
+    
+    const impactedFinish = new Date(currentFinish);
+    impactedFinish.setDate(impactedFinish.getDate() + totalDelayDays);
+    
+    // Create result
+    const result: InsertTiaResult = {
+      scenarioId,
+      unimpactedFinishDate: currentFinish.toISOString().split('T')[0],
+      impactedFinishDate: impactedFinish.toISOString().split('T')[0],
+      netImpactDays: totalDelayDays,
+      criticalPathChanges: { previousCritical: [], newCritical: [] },
+      floatErosion: {},
+      affectedMilestones: []
+    };
+    
+    return await this.createTiaResult(result);
   }
 
   // Schedule Updates
