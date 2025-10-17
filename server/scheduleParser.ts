@@ -115,77 +115,78 @@ export class XERParser {
 // MS Project XML Parser (MPX/MSPDI format)
 export class MSProjectXMLParser {
   parse(content: string): ParsedScheduleData {
-    // Parse XML content
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(content, 'text/xml');
-    
-    const tasks = doc.getElementsByTagName('Task');
+    // Simple XML parsing using regex for Node.js environment
     const activities: Activity[] = [];
     const taskMap = new Map<string, Activity>();
     
+    // Extract tasks using regex - look for Task or task elements
+    const taskPattern = /<Task[^>]*>[\s\S]*?<\/Task>/gi;
+    const taskMatches = content.match(taskPattern) || [];
+    
+    console.log(`Found ${taskMatches.length} tasks in XML file`);
+    
     // First pass: create activities
-    for (let i = 0; i < tasks.length; i++) {
-      const task = tasks[i];
-      const taskId = this.getElementText(task, 'UID');
-      const wbs = this.getElementText(task, 'WBS');
-      const outlineLevel = parseInt(this.getElementText(task, 'OutlineLevel')) || 0;
+    taskMatches.forEach((taskXml, index) => {
+      const taskId = this.extractXmlValue(taskXml, 'UID');
+      const wbs = this.extractXmlValue(taskXml, 'WBS');
+      const outlineLevelStr = this.extractXmlValue(taskXml, 'OutlineLevel');
+      const outlineLevel = outlineLevelStr ? parseInt(outlineLevelStr) : -1; // Use -1 if not specified
+      const isSummary = this.extractXmlValue(taskXml, 'Summary') === '1';
       
-      // Skip summary tasks (outline level 0 or has subtasks)
-      if (outlineLevel === 0 || this.getElementText(task, 'Summary') === '1') {
-        continue;
+      // Skip only if explicitly marked as summary
+      if (isSummary) {
+        console.log(`Skipping summary task: ${this.extractXmlValue(taskXml, 'Name')}`);
+        return;
       }
       
       const activity: Activity = {
         id: crypto.randomUUID(),
-        activityId: this.getElementText(task, 'ID') || `A${(i + 1).toString().padStart(3, '0')}`,
-        activityName: this.getElementText(task, 'Name') || 'Unnamed Activity',
-        duration: parseInt(this.getElementText(task, 'Duration')?.replace(/[^\d]/g, '')) / 8 || 1,
+        activityId: this.extractXmlValue(taskXml, 'ID') || `A${(index + 1).toString().padStart(3, '0')}`,
+        activityName: this.extractXmlValue(taskXml, 'Name') || 'Unnamed Activity',
+        duration: this.parseDuration(this.extractXmlValue(taskXml, 'Duration')),
         predecessors: [],
         successors: [],
-        status: this.mapMSPStatus(parseInt(this.getElementText(task, 'PercentComplete'))),
-        percentComplete: parseInt(this.getElementText(task, 'PercentComplete')) || 0,
-        startDate: this.formatMSPDate(this.getElementText(task, 'Start')),
-        finishDate: this.formatMSPDate(this.getElementText(task, 'Finish')),
+        status: this.mapMSPStatus(parseInt(this.extractXmlValue(taskXml, 'PercentComplete')) || 0),
+        percentComplete: parseInt(this.extractXmlValue(taskXml, 'PercentComplete')) || 0,
+        startDate: this.formatMSPDate(this.extractXmlValue(taskXml, 'Start')),
+        finishDate: this.formatMSPDate(this.extractXmlValue(taskXml, 'Finish')),
         wbs: wbs || '',
-        resources: this.extractResources(task),
-        earlyStart: parseInt(this.getElementText(task, 'EarlyStart')) || 0,
-        earlyFinish: parseInt(this.getElementText(task, 'EarlyFinish')) || 0,
-        lateStart: parseInt(this.getElementText(task, 'LateStart')) || 0,
-        lateFinish: parseInt(this.getElementText(task, 'LateFinish')) || 0,
-        totalFloat: parseInt(this.getElementText(task, 'TotalSlack')) / 480 || 0, // Convert minutes to days
-        isCritical: this.getElementText(task, 'Critical') === '1'
+        resources: this.extractResourcesFromXml(taskXml),
+        totalFloat: parseInt(this.extractXmlValue(taskXml, 'TotalSlack')) / 480 || 0, // Convert minutes to days
+        isCritical: this.extractXmlValue(taskXml, 'Critical') === '1'
       };
       
       activities.push(activity);
-      taskMap.set(taskId, activity);
-    }
+      if (taskId) {
+        taskMap.set(taskId, activity);
+      }
+    });
     
     // Second pass: set up predecessors
-    for (let i = 0; i < tasks.length; i++) {
-      const task = tasks[i];
-      const taskId = this.getElementText(task, 'UID');
+    taskMatches.forEach(taskXml => {
+      const taskId = this.extractXmlValue(taskXml, 'UID');
       const activity = taskMap.get(taskId);
-      if (!activity) continue;
+      if (!activity) return;
       
-      const predecessorLinks = task.getElementsByTagName('PredecessorLink');
-      for (let j = 0; j < predecessorLinks.length; j++) {
-        const predLink = predecessorLinks[j];
-        const predUID = this.getElementText(predLink, 'PredecessorUID');
+      // Extract predecessor links
+      const predLinkMatches = taskXml.match(/<PredecessorLink>[\s\S]*?<\/PredecessorLink>/g) || [];
+      predLinkMatches.forEach(predLinkXml => {
+        const predUID = this.extractXmlValue(predLinkXml, 'PredecessorUID');
         const predActivity = taskMap.get(predUID);
         if (predActivity) {
           activity.predecessors.push(predActivity.activityId);
           predActivity.successors.push(activity.activityId);
         }
-      }
-    }
+      });
+    });
     
     // Extract project info
-    const projectNode = doc.getElementsByTagName('Project')[0];
+    const projectName = this.extractXmlValue(content, 'Title') || this.extractXmlValue(content, 'Name') || 'Imported Project';
     const projectInfo = {
-      name: this.getElementText(projectNode, 'Title') || this.getElementText(projectNode, 'Name'),
-      startDate: this.formatMSPDate(this.getElementText(projectNode, 'StartDate')),
-      finishDate: this.formatMSPDate(this.getElementText(projectNode, 'FinishDate')),
-      dataDate: this.formatMSPDate(this.getElementText(projectNode, 'CurrentDate'))
+      name: projectName,
+      startDate: this.formatMSPDate(this.extractXmlValue(content, 'StartDate')),
+      finishDate: this.formatMSPDate(this.extractXmlValue(content, 'FinishDate')),
+      dataDate: this.formatMSPDate(this.extractXmlValue(content, 'CurrentDate'))
     };
     
     return {
@@ -195,18 +196,35 @@ export class MSProjectXMLParser {
     };
   }
   
-  private getElementText(parent: Element, tagName: string): string {
-    const element = parent.getElementsByTagName(tagName)[0];
-    return element?.textContent || '';
+  private extractXmlValue(xml: string, tagName: string): string {
+    const regex = new RegExp(`<${tagName}>([^<]*)<\/${tagName}>`, 'i');
+    const match = xml.match(regex);
+    return match ? match[1] : '';
   }
   
-  private extractResources(task: Element): string[] {
-    const resources: string[] = [];
-    const assignments = task.getElementsByTagName('Assignment');
-    for (let i = 0; i < assignments.length; i++) {
-      const resourceName = this.getElementText(assignments[i], 'ResourceName');
-      if (resourceName) resources.push(resourceName);
+  private parseDuration(durationStr: string): number {
+    if (!durationStr) return 1;
+    // MS Project duration format: PT40H (40 hours) or P5D (5 days)
+    const hoursMatch = durationStr.match(/PT(\d+)H/);
+    if (hoursMatch) {
+      return parseInt(hoursMatch[1]) / 8; // Convert hours to days
     }
+    const daysMatch = durationStr.match(/P(\d+)D/);
+    if (daysMatch) {
+      return parseInt(daysMatch[1]);
+    }
+    // Fallback: try to extract any number
+    const numberMatch = durationStr.match(/\d+/);
+    return numberMatch ? parseInt(numberMatch[0]) / 8 : 1;
+  }
+  
+  private extractResourcesFromXml(taskXml: string): string[] {
+    const resources: string[] = [];
+    const assignmentMatches = taskXml.match(/<Assignment>[\s\S]*?<\/Assignment>/g) || [];
+    assignmentMatches.forEach(assignmentXml => {
+      const resourceName = this.extractXmlValue(assignmentXml, 'ResourceName');
+      if (resourceName) resources.push(resourceName);
+    });
     return resources;
   }
   
@@ -282,7 +300,11 @@ Return as JSON:
         ]
       });
       
-      const result = JSON.parse(response.choices[0].message.content || "{}");
+      // Clean the response in case it's wrapped in markdown code fences
+      let content = response.choices[0].message.content || "{}";
+      // Remove markdown code fences if present
+      content = content.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+      const result = JSON.parse(content);
       
       // Convert to our Activity format
       const activities: Activity[] = result.activities.map((act: any, index: number) => ({
@@ -354,7 +376,11 @@ Include projectInfo with name, startDate, finishDate, dataDate.`;
         ]
       });
       
-      const result = JSON.parse(response.choices[0].message.content || "{}");
+      // Clean the response in case it's wrapped in markdown code fences
+      let content = response.choices[0].message.content || "{}";
+      // Remove markdown code fences if present
+      content = content.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+      const result = JSON.parse(content);
       
       const activities: Activity[] = result.activities.map((act: any, index: number) => ({
         id: crypto.randomUUID(),

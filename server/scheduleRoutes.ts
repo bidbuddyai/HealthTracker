@@ -10,6 +10,7 @@ import { exportSchedule } from "./scheduleExporter";
 import type { ProjectSchedule, ScheduleActivity } from "@shared/schema";
 import { generateScheduleWithAI } from "./scheduleAITools";
 import { poe } from "./poeClient";
+import { parseScheduleFile } from "./scheduleParser";
 
 // Export interface for schedule activities used by the AI and parsers
 export interface ScheduleActivityData {
@@ -177,62 +178,13 @@ export function registerScheduleRoutes(app: Express) {
         return res.status(400).json({ error: "File content and filename are required" });
       }
 
-      // Use AI to parse the schedule file content
-      const parsePrompt = `Parse this construction schedule file and extract activities. For each activity, extract:
-- Activity ID
-- Activity Name  
-- Activity Type (Milestone, Task, etc)
-- Duration (original and remaining)
-- Start and Finish dates (YYYY-MM-DD format)
-- Predecessors and Successors
-- Total Float
-- Status (Not Started, In Progress, Completed)
-
-Format as JSON with this structure:
-{
-  "activities": [
-    {
-      "activityId": "A001",
-      "activityName": "Activity Name",
-      "duration": 5,
-      "startDate": "2024-01-15",
-      "finishDate": "2024-01-19",
-      "predecessors": ["A000"],
-      "totalFloat": 0,
-      "status": "Not Started"
-    }
-  ],
-  "projectInfo": {
-    "name": "Project Name",
-    "startDate": "2024-01-01",
-    "finishDate": "2024-12-31",
-    "dataDate": "2024-01-01"
-  }
-}
-
-Here's the schedule file content:
-${fileContent}`;
-
-      const parseResponse = await poe.chat.completions.create({
-        model: "Claude-Sonnet-4",
-        messages: [
-          { role: "system", content: "You are a construction schedule parser. Extract structured data from schedule files." },
-          { role: "user", content: parsePrompt }
-        ]
-      });
-
-      let parsedData: ParsedScheduleData = { activities: [], projectInfo: {}, summary: "" };
+      // Use the dedicated parser for the file format
+      let parsedData: ParsedScheduleData;
       try {
-        const content = parseResponse.choices[0].message.content || "{}";
-        const result = JSON.parse(content);
-        parsedData = {
-          activities: result.activities || [],
-          projectInfo: result.projectInfo || {},
-          summary: `Imported ${result.activities?.length || 0} activities from ${filename}`
-        };
+        parsedData = await parseScheduleFile(fileContent, filename);
       } catch (parseError) {
-        console.error("Failed to parse AI response:", parseError);
-        return res.status(400).json({ error: "Failed to parse schedule file content" });
+        console.error("Failed to parse schedule file:", parseError);
+        return res.status(400).json({ error: "Failed to parse schedule file content. Please ensure the file is a valid schedule format." });
       }
 
       if (parsedData.activities.length === 0) {
@@ -241,6 +193,9 @@ ${fileContent}`;
 
       // Store activities using the storage interface
       let createdCount = 0;
+      let skippedCount = 0;
+      let updatedCount = 0;
+      
       for (const act of parsedData.activities) {
         try {
           const activityData = {
@@ -258,17 +213,53 @@ ${fileContent}`;
             notes: act.wbs || null
           };
           
-          await storage.createActivity(activityData);
-          createdCount++;
-        } catch (error) {
-          console.error(`Failed to create activity ${act.activityId}:`, error);
+          // Check if activity already exists
+          const existingActivities = await storage.getActivitiesByProject(req.params.projectId);
+          const existingActivity = existingActivities.find(a => a.activityId === act.activityId);
+          
+          if (existingActivity) {
+            // Update existing activity
+            await storage.updateActivity(existingActivity.id, {
+              name: activityData.name,
+              type: activityData.type,
+              originalDuration: activityData.originalDuration,
+              remainingDuration: activityData.remainingDuration,
+              earlyStart: activityData.earlyStart,
+              earlyFinish: activityData.earlyFinish,
+              totalFloat: activityData.totalFloat,
+              status: activityData.status,
+              notes: activityData.notes
+            });
+            updatedCount++;
+          } else {
+            // Create new activity
+            await storage.createActivity(activityData);
+            createdCount++;
+          }
+        } catch (error: any) {
+          // Check for duplicate key error
+          if (error.message?.includes('duplicate key') || error.code === '23505') {
+            skippedCount++;
+            console.log(`Skipped duplicate activity ${act.activityId}`);
+          } else {
+            console.error(`Failed to create activity ${act.activityId}:`, error);
+            skippedCount++;
+          }
         }
       }
 
+      const totalProcessed = createdCount + updatedCount;
+      let message = `Import complete: ${createdCount} new`;
+      if (updatedCount > 0) message += `, ${updatedCount} updated`;
+      if (skippedCount > 0) message += `, ${skippedCount} skipped`;
+      
       res.json({
         success: true,
-        message: `Successfully imported ${createdCount} activities`,
-        activitiesCount: createdCount,
+        message,
+        activitiesCount: totalProcessed,
+        created: createdCount,
+        updated: updatedCount,
+        skipped: skippedCount,
         projectInfo: parsedData.projectInfo,
         summary: parsedData.summary
       });
