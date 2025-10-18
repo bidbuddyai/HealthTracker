@@ -25,8 +25,7 @@ interface AssistantResponse {
 // Available models from Poe's OpenAI-compatible API
 const POE_MODELS = [
   // GPT Models
-  { value: "gpt-5-pro", label: "GPT-5 Pro", category: "GPT" },
-  { value: "GPT-5", label: "GPT-5 (Latest)", category: "GPT" },
+  { value: "GPT-5", label: "GPT-5 (Latest Flagship)", category: "GPT" },
   { value: "GPT-5-mini", label: "GPT-5 Mini", category: "GPT" },
   { value: "GPT-4o", label: "GPT-4o", category: "GPT" },
   { value: "GPT-4.1", label: "GPT-4.1", category: "GPT" },
