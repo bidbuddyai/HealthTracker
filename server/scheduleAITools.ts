@@ -478,17 +478,16 @@ Provide:
       break;
   }
   
+  console.log(`\n=== POE API REQUEST DEBUG ===`);
+  console.log(`Model: ${request.model || 'Claude-Sonnet-4'}`);
+  console.log(`Uploaded Files Count: ${request.uploadedFiles?.length || 0}`);
+  console.log(`Uploaded Files:`, request.uploadedFiles);
+  console.log(`Uploaded Content Length: ${uploadedContent.length} chars`);
+  console.log(`Prompt Length: ${prompt.length} chars`);
+  console.log(`===========================\n`);
+  
   try {
     const aiModel = request.model || 'Claude-Sonnet-4';
-    console.log(`\n=== POE API REQUEST DEBUG ===`);
-    console.log(`Model: ${aiModel}`);
-    console.log(`Uploaded Files Count: ${request.uploadedFiles?.length || 0}`);
-    console.log(`Uploaded Files:`, request.uploadedFiles);
-    console.log(`Document Analyses Count: ${documentAnalyses.length}`);
-    console.log(`Uploaded Content Length: ${uploadedContent.length} chars`);
-    console.log(`Prompt Length: ${prompt.length} chars`);
-    console.log(`Prompt Preview:`, prompt.substring(0, 500) + '...');
-    console.log(`===========================\n`);
     
     let response;
     try {

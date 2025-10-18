@@ -552,6 +552,58 @@ The schedule now reflects your requested changes. What else would you like to mo
     );
   };
 
+  // Helper function to upload files manually and get object paths
+  const uploadFilesManually = async (files: File[]): Promise<string[]> => {
+    const objectPaths: string[] = [];
+    
+    for (const file of files) {
+      try {
+        // Get upload URL
+        const uploadUrlResponse = await apiRequest("POST", "/api/objects/upload", {});
+        if (!uploadUrlResponse.ok) {
+          console.error('Failed to get upload URL for:', file.name);
+          continue;
+        }
+        
+        const { url } = await uploadUrlResponse.json();
+        
+        // Upload file to storage
+        const uploadResponse = await fetch(url, {
+          method: 'PUT',
+          body: file,
+          headers: {
+            'Content-Type': file.type || 'application/octet-stream'
+          }
+        });
+        
+        if (!uploadResponse.ok) {
+          console.error('Failed to upload file:', file.name);
+          continue;
+        }
+        
+        // Finalize upload
+        const finalizeResponse = await apiRequest("POST", "/api/objects/finalize", {
+          uploadUrl: url,
+          fileName: file.name,
+          fileSize: file.size,
+          fileType: file.type || 'application/octet-stream',
+          projectId: projectId,
+          category: 'Document',
+          description: 'AI Schedule Generation Document'
+        });
+        
+        if (finalizeResponse.ok) {
+          const data = await finalizeResponse.json();
+          objectPaths.push(data.objectPath);
+        }
+      } catch (error) {
+        console.error('Error uploading file:', file.name, error);
+      }
+    }
+    
+    return objectPaths;
+  };
+
   const handleFileUpload = async (result: UploadResult<Record<string, unknown>, Record<string, unknown>>) => {
     const successful = result.successful || [];
     
@@ -1123,16 +1175,33 @@ The schedule now reflects your requested changes. What else would you like to mo
                       setIsDragOver(true);
                     }}
                     onDragLeave={() => setIsDragOver(false)}
-                    onDrop={(e) => {
+                    onDrop={async (e) => {
                       e.preventDefault();
                       setIsDragOver(false);
                       const files = Array.from(e.dataTransfer.files);
                       if (files.length > 0) {
-                        setUploadedFiles(prev => [...prev, ...files.map(f => f.name)]);
                         toast({
-                          title: "Files Dropped",
-                          description: `${files.length} file(s) will be analyzed by AI`,
+                          title: "Uploading Files",
+                          description: `Uploading ${files.length} file(s)...`,
                         });
+                        const objectPaths = await uploadFilesManually(files);
+                        if (objectPaths.length > 0) {
+                          setUploadedFiles(prev => [...prev, ...objectPaths]);
+                          setIsAnalyzingDocs(true);
+                          analyzeDocumentsMutation.mutate(objectPaths, {
+                            onSettled: () => setIsAnalyzingDocs(false)
+                          });
+                          toast({
+                            title: "Files Uploaded",
+                            description: `${objectPaths.length} file(s) will be analyzed by AI`,
+                          });
+                        } else {
+                          toast({
+                            title: "Upload Failed",
+                            description: "Failed to upload files. Please try again.",
+                            variant: "destructive"
+                          });
+                        }
                       }
                     }}
                   >
@@ -1302,17 +1371,28 @@ The schedule now reflects your requested changes. What else would you like to mo
                           setIsQuickGenerateDragOver(false);
                         }
                       }}
-                      onDrop={(e) => {
+                      onDrop={async (e) => {
                         e.preventDefault();
                         e.stopPropagation();
                         setIsQuickGenerateDragOver(false);
                         const files = Array.from(e.dataTransfer.files);
                         if (files.length > 0) {
-                          setUploadedFiles(prev => [...prev, ...files.map(f => f.name)]);
                           toast({
-                            title: "Files Dropped",
-                            description: `${files.length} file(s) will be analyzed when generating the schedule`,
+                            title: "Uploading Files",
+                            description: `Uploading ${files.length} file(s)...`,
                           });
+                          const objectPaths = await uploadFilesManually(files);
+                          if (objectPaths.length > 0) {
+                            setUploadedFiles(prev => [...prev, ...objectPaths]);
+                            setIsAnalyzingDocs(true);
+                            analyzeDocumentsMutation.mutate(objectPaths, {
+                              onSettled: () => setIsAnalyzingDocs(false)
+                            });
+                            toast({
+                              title: "Files Uploaded",
+                              description: `${objectPaths.length} file(s) will be analyzed when generating the schedule`,
+                            });
+                          }
                         }
                       }}
                     >
@@ -1331,15 +1411,27 @@ The schedule now reflects your requested changes. What else would you like to mo
                           type="file"
                           multiple
                           accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.csv"
-                          onChange={(e) => {
+                          onChange={async (e) => {
                             const files = Array.from(e.target.files || []);
                             if (files.length > 0) {
-                              setUploadedFiles(prev => [...prev, ...files.map(f => f.name)]);
                               toast({
-                                title: "Files Selected",
-                                description: `${files.length} file(s) will be analyzed by AI when generating the schedule`,
+                                title: "Uploading Files",
+                                description: `Uploading ${files.length} file(s)...`,
                               });
+                              const objectPaths = await uploadFilesManually(files);
+                              if (objectPaths.length > 0) {
+                                setUploadedFiles(prev => [...prev, ...objectPaths]);
+                                setIsAnalyzingDocs(true);
+                                analyzeDocumentsMutation.mutate(objectPaths, {
+                                  onSettled: () => setIsAnalyzingDocs(false)
+                                });
+                                toast({
+                                  title: "Files Selected",
+                                  description: `${objectPaths.length} file(s) will be analyzed by AI when generating the schedule`,
+                                });
+                              }
                             }
+                            e.target.value = '';
                           }}
                           className="hidden"
                         />
