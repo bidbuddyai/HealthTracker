@@ -2407,7 +2407,47 @@ Return ONLY the enhanced prompt text, nothing else.`;
     }
   });
 
-  // Generate presigned upload URL for object storage
+  // Direct file upload endpoint (workaround for object storage sidecar issues)
+  app.post("/api/objects/upload-direct", isAuthenticated, async (req, res) => {
+    try {
+      const userId = (req as any).user?.claims?.sub;
+      const { fileName, fileContent, fileType, projectId, description, category } = req.body;
+      
+      if (!userId || !fileName || !fileContent || !projectId) {
+        return res.status(400).json({ 
+          error: "Missing required fields: fileName, fileContent, projectId" 
+        });
+      }
+
+      // Store file content in database directly as base64
+      const fileSize = Buffer.from(fileContent, 'base64').length;
+      const objectPath = `/objects/uploads/${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      
+      // Create attachment record with embedded file content
+      const attachment = await storage.createAttachmentWithContent({
+        projectId,
+        fileName,
+        fileSize,
+        fileType: fileType || 'application/octet-stream',
+        storageUrl: objectPath,
+        uploadedBy: userId,
+        description: description || null,
+        category: category || 'Document',
+        fileContent // Store base64 content directly
+      });
+      
+      res.json({
+        success: true,
+        attachment,
+        objectPath
+      });
+    } catch (error) {
+      console.error("Error uploading file directly:", error);
+      res.status(500).json({ error: "Failed to upload file" });
+    }
+  });
+
+  // Generate presigned upload URL for object storage (keeping for backwards compatibility)
   app.post("/api/objects/upload", isAuthenticated, async (req, res) => {
     try {
       const userId = (req as any).user?.claims?.sub;
