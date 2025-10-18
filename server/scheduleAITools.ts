@@ -202,17 +202,60 @@ function extractJSONFromResponse(content: string): { success: boolean; data?: an
     }
   }
   
-  // Strategy 5: Extract multiple JSON objects and find the best one
+  // Strategy 5: Extract all valid JSON objects and find the best one
+  // This strategy handles deeply nested objects AND quoted strings properly
   const allJsonObjects = [];
-  const jsonRegex = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}/g;
-  let match;
+  let i = 0;
   
-  while ((match = jsonRegex.exec(content)) !== null) {
-    try {
-      const obj = JSON.parse(match[0]);
-      allJsonObjects.push({ obj, raw: match[0], index: match.index });
-    } catch (e) {
-      // Skip invalid JSON
+  while (i < content.length) {
+    if (content[i] === '{') {
+      let braceCount = 0;
+      let start = i;
+      let inString = false;
+      let escapeNext = false;
+      
+      // Find the matching closing brace, respecting quoted strings
+      for (let j = i; j < content.length; j++) {
+        const char = content[j];
+        
+        if (escapeNext) {
+          escapeNext = false;
+          continue;
+        }
+        
+        if (char === '\\') {
+          escapeNext = true;
+          continue;
+        }
+        
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+        
+        // Only count braces when NOT inside a string
+        if (!inString) {
+          if (char === '{') braceCount++;
+          if (char === '}') braceCount--;
+          
+          if (braceCount === 0) {
+            const candidate = content.substring(start, j + 1);
+            try {
+              const obj = JSON.parse(candidate);
+              allJsonObjects.push({ obj, raw: candidate, index: start });
+              i = j + 1;
+              break;
+            } catch (e) {
+              // Not valid JSON, continue
+            }
+            i = j + 1;
+            break;
+          }
+        }
+      }
+      if (braceCount !== 0) break; // Unmatched braces, stop
+    } else {
+      i++;
     }
   }
   
