@@ -381,6 +381,27 @@ export const aiContext = pgTable("ai_context", {
   createdAt: timestamp("created_at").defaultNow().notNull()
 });
 
+// AI Conversations - Persistent chat history per project
+export const aiConversations = pgTable("ai_conversations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").references(() => projects.id).notNull(),
+  title: text("title"), // Auto-generated from first message
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  lastMessageAt: timestamp("last_message_at").defaultNow().notNull()
+});
+
+// AI Messages - Individual messages within conversations
+export const aiMessages = pgTable("ai_messages", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  conversationId: varchar("conversation_id").references(() => aiConversations.id).notNull(),
+  role: text("role").notNull(), // "user", "assistant", "system"
+  content: text("content").notNull(),
+  model: text("model"), // Which AI model was used for this response
+  metadata: jsonb("metadata"), // Additional data like activitiesGenerated, filesUploaded, etc.
+  createdAt: timestamp("created_at").defaultNow().notNull()
+});
+
 // Activity Comments for collaboration
 export const activityComments = pgTable("activity_comments", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -477,6 +498,8 @@ export const insertTiaResultSchema = createInsertSchema(tiaResults).omit({ id: t
 export const insertScheduleUpdateSchema = createInsertSchema(scheduleUpdates).omit({ id: true, createdAt: true });
 export const insertImportExportHistorySchema = createInsertSchema(importExportHistory).omit({ id: true, createdAt: true });
 export const insertAiContextSchema = createInsertSchema(aiContext).omit({ id: true, createdAt: true });
+export const insertAiConversationSchema = createInsertSchema(aiConversations).omit({ id: true, createdAt: true, updatedAt: true, lastMessageAt: true });
+export const insertAiMessageSchema = createInsertSchema(aiMessages).omit({ id: true, createdAt: true });
 export const insertActivityCommentSchema = createInsertSchema(activityComments).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertAttachmentSchema = createInsertSchema(attachments).omit({ id: true, uploadedAt: true });
 export const insertAuditLogSchema = createInsertSchema(auditLogs).omit({ id: true, performedAt: true });
@@ -524,6 +547,10 @@ export type ImportExportHistory = typeof importExportHistory.$inferSelect;
 export type InsertImportExportHistory = z.infer<typeof insertImportExportHistorySchema>;
 export type AiContext = typeof aiContext.$inferSelect;
 export type InsertAiContext = z.infer<typeof insertAiContextSchema>;
+export type AiConversation = typeof aiConversations.$inferSelect;
+export type InsertAiConversation = z.infer<typeof insertAiConversationSchema>;
+export type AiMessage = typeof aiMessages.$inferSelect;
+export type InsertAiMessage = z.infer<typeof insertAiMessageSchema>;
 export type ActivityComment = typeof activityComments.$inferSelect;
 export type InsertActivityComment = z.infer<typeof insertActivityCommentSchema>;
 export type Attachment = typeof attachments.$inferSelect;
