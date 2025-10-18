@@ -57,6 +57,34 @@ const requireProjectAccess = async (req: any, res: any, next: any) => {
   next();
 };
 
+// Conversation authorization middleware - for routes with conversationId param
+const requireConversationAccess = async (req: any, res: any, next: any) => {
+  const userId = req.user?.claims?.sub;
+  const conversationId = req.params.conversationId;
+  
+  if (!userId || !conversationId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  
+  try {
+    const conversation = await storage.getConversation(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation not found" });
+    }
+    
+    // Check if user has access to the conversation's project
+    const hasAccess = await hasProjectAccess(userId, conversation.projectId);
+    if (!hasAccess) {
+      return res.status(403).json({ error: "Access denied to conversation" });
+    }
+    
+    next();
+  } catch (error) {
+    console.error("Conversation access check error:", error);
+    res.status(500).json({ error: "Authorization check failed" });
+  }
+};
+
 // WBS authorization middleware - for routes with wbsId param
 const requireWbsAccess = async (req: any, res: any, next: any) => {
   const userId = req.user?.claims?.sub;
@@ -2635,6 +2663,91 @@ Return ONLY the enhanced prompt text, nothing else.`;
         error: "Failed to generate processing preview", 
         details: error instanceof Error ? error.message : "Unknown error" 
       });
+    }
+  });
+  
+  // AI Conversation routes
+  app.get("/api/conversations/:projectId", isAuthenticated, requireProjectAccess, async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const conversations = await storage.getConversationsByProject(projectId);
+      res.json(conversations);
+    } catch (error) {
+      console.error("Error fetching conversations:", error);
+      res.status(500).json({ error: "Failed to fetch conversations" });
+    }
+  });
+
+  app.get("/api/conversations/:projectId/active", isAuthenticated, requireProjectAccess, async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const conversation = await storage.getActiveConversation(projectId);
+      res.json(conversation || null);
+    } catch (error) {
+      console.error("Error fetching active conversation:", error);
+      res.status(500).json({ error: "Failed to fetch active conversation" });
+    }
+  });
+
+  app.post("/api/conversations", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { projectId } = req.body;
+      
+      if (!userId || !projectId) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+      
+      // Check project access before creating conversation
+      const hasAccess = await hasProjectAccess(userId, projectId);
+      if (!hasAccess) {
+        return res.status(403).json({ error: "Access denied to project" });
+      }
+      
+      const conversation = await storage.createConversation(req.body);
+      res.json(conversation);
+    } catch (error) {
+      console.error("Error creating conversation:", error);
+      res.status(500).json({ error: "Failed to create conversation" });
+    }
+  });
+
+  app.get("/api/conversations/:conversationId/messages", isAuthenticated, requireConversationAccess, async (req, res) => {
+    try {
+      const { conversationId } = req.params;
+      const messages = await storage.getMessagesByConversation(conversationId);
+      res.json(messages);
+    } catch (error) {
+      console.error("Error fetching messages:", error);
+      res.status(500).json({ error: "Failed to fetch messages" });
+    }
+  });
+
+  app.post("/api/conversations/messages", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { conversationId } = req.body;
+      
+      if (!userId || !conversationId) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+      
+      // Check conversation access before creating message
+      const conversation = await storage.getConversation(conversationId);
+      if (!conversation) {
+        return res.status(404).json({ error: "Conversation not found" });
+      }
+      
+      const hasAccess = await hasProjectAccess(userId, conversation.projectId);
+      if (!hasAccess) {
+        return res.status(403).json({ error: "Access denied to conversation" });
+      }
+      
+      const message = await storage.createMessage(req.body);
+      res.json(message);
+    } catch (error) {
+      console.error("Error creating message:", error);
+      res.status(500).json({ error: "Failed to create message" });
     }
   });
   

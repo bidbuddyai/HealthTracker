@@ -89,6 +89,7 @@ interface ChatMessage {
   content: string;
   timestamp: Date;
   activities?: Activity[];
+  model?: string;
   metadata?: {
     activitiesGenerated?: number;
     relationshipsCreated?: number;
@@ -144,6 +145,8 @@ export default function AIFloatingBubble({ projectId, defaultOpen = false }: AIF
   const [generatedActivities, setGeneratedActivities] = useState<Activity[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [isDragOver, setIsDragOver] = useState(false);
@@ -165,6 +168,47 @@ export default function AIFloatingBubble({ projectId, defaultOpen = false }: AIF
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const miniChatScrollRef = useRef<HTMLDivElement>(null);
   
+  // Load conversation history on mount
+  useEffect(() => {
+    const loadConversationHistory = async () => {
+      try {
+        // Get or create active conversation for this project
+        const convResponse = await apiRequest("GET", `/api/conversations/${projectId}/active`);
+        
+        if (convResponse.ok) {
+          const conversation = await convResponse.json();
+          
+          if (conversation) {
+            setConversationId(conversation.id);
+            
+            // Load messages for this conversation
+            const messagesResponse = await apiRequest("GET", `/api/conversations/${conversation.id}/messages`);
+            if (messagesResponse.ok) {
+              const messages = await messagesResponse.json();
+              
+              // Convert database messages to ChatMessage format
+              const chatMessages: ChatMessage[] = messages.map((msg: any) => ({
+                role: msg.role,
+                content: msg.content,
+                timestamp: new Date(msg.createdAt),
+                model: msg.model || undefined,
+                metadata: msg.metadata || undefined
+              }));
+              
+              setChatHistory(chatMessages);
+            }
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load conversation history:", error);
+      } finally {
+        setIsLoadingHistory(false);
+      }
+    };
+    
+    loadConversationHistory();
+  }, [projectId]);
+
   // Auto-open when defaultOpen is true (from project creation)
   useEffect(() => {
     if (defaultOpen) {
@@ -275,7 +319,7 @@ export default function AIFloatingBubble({ projectId, defaultOpen = false }: AIF
         throw error;
       }
     },
-    onSuccess: (data, variables) => {
+    onSuccess: async (data, variables) => {
       if (data && data.activities && data.activities.length > 0) {
         // Add assistant response to chat
         const assistantMessage: ChatMessage = {
@@ -283,6 +327,7 @@ export default function AIFloatingBubble({ projectId, defaultOpen = false }: AIF
           content: generateAssistantResponse(data, variables.isInitial),
           timestamp: new Date(),
           activities: data.activities,
+          model: selectedModel,
           metadata: {
             activitiesGenerated: data.activities.length,
             relationshipsCreated: countRelationships(data.activities),
@@ -293,6 +338,14 @@ export default function AIFloatingBubble({ projectId, defaultOpen = false }: AIF
         };
         
         setChatHistory(prev => [...prev, assistantMessage]);
+        
+        // Save assistant message to database
+        try {
+          const convId = conversationId || await ensureConversation();
+          await saveMessageToDb(assistantMessage, convId);
+        } catch (error) {
+          console.error("Failed to save assistant message:", error);
+        }
         setGeneratedActivities(data.activities);
         
         if (data.saved) {
@@ -527,8 +580,46 @@ The schedule now reflects your requested changes. What else would you like to mo
       setIsEnhancing(false);
     }
   };
+
+  // Get or create conversation
+  const ensureConversation = async (): Promise<string> => {
+    if (conversationId) return conversationId;
+    
+    // Create new conversation
+    try {
+      const response = await apiRequest("POST", "/api/conversations", {
+        projectId,
+        title: `Schedule Chat ${new Date().toLocaleDateString()}`
+      });
+      
+      if (response.ok) {
+        const conversation = await response.json();
+        setConversationId(conversation.id);
+        return conversation.id;
+      }
+    } catch (error) {
+      console.error("Failed to create conversation:", error);
+    }
+    
+    throw new Error("Failed to ensure conversation exists");
+  };
+
+  // Save message to database
+  const saveMessageToDb = async (message: ChatMessage, convId: string) => {
+    try {
+      await apiRequest("POST", "/api/conversations/messages", {
+        conversationId: convId,
+        role: message.role,
+        content: message.content,
+        model: message.model || null,
+        metadata: message.metadata || null
+      });
+    } catch (error) {
+      console.error("Failed to save message:", error);
+    }
+  };
   
-  const handleSendMessage = () => {
+  const handleSendMessage = async () => {
     if (!chatInput.trim() || isGenerating) return;
 
     const userMessage: ChatMessage = {
@@ -541,6 +632,14 @@ The schedule now reflects your requested changes. What else would you like to mo
     setChatInput("");
     setIsGenerating(true);
 
+    // Ensure conversation exists and save user message
+    try {
+      const convId = await ensureConversation();
+      await saveMessageToDb(userMessage, convId);
+    } catch (error) {
+      console.error("Failed to save user message:", error);
+    }
+
     generateScheduleMutation.mutate(
       { 
         message: chatInput, 
@@ -550,6 +649,37 @@ The schedule now reflects your requested changes. What else would you like to mo
         onSettled: () => setIsGenerating(false)
       }
     );
+  };
+
+  const handleRetryWithModel = (messageIndex: number, newModel: string) => {
+    // Find the user message that preceded this assistant message
+    const userMessages = chatHistory.slice(0, messageIndex).filter(m => m.role === 'user');
+    if (userMessages.length === 0) return;
+    
+    const lastUserMessage = userMessages[userMessages.length - 1];
+    
+    // Update the selected model
+    setSelectedModel(newModel);
+    
+    // Remove the assistant message and everything after it
+    setChatHistory(prev => prev.slice(0, messageIndex));
+    
+    // Retry with new model
+    setIsGenerating(true);
+    generateScheduleMutation.mutate(
+      { 
+        message: lastUserMessage.content, 
+        isInitial: false 
+      },
+      {
+        onSettled: () => setIsGenerating(false)
+      }
+    );
+    
+    toast({
+      title: "Retrying",
+      description: `Retrying with ${newModel}`,
+    });
   };
 
   // Helper function to upload files manually using direct upload
@@ -1137,6 +1267,40 @@ The schedule now reflects your requested changes. What else would you like to mo
                                           Schedule: {message.metadata.extractedDates.start} to {message.metadata.extractedDates.end}
                                         </div>
                                       )}
+                                    </div>
+                                  )}
+                                  
+                                  {/* Retry Button for Assistant Messages */}
+                                  {message.role === 'assistant' && (
+                                    <div className="mt-3 pt-3 border-t border-gray-200">
+                                      <div className="flex items-center gap-2">
+                                        <Select
+                                          onValueChange={(newModel) => handleRetryWithModel(idx, newModel)}
+                                          disabled={isGenerating}
+                                        >
+                                          <SelectTrigger 
+                                            className="h-7 text-xs w-auto"
+                                            data-testid={`select-retry-model-${idx}`}
+                                          >
+                                            <RefreshCw className="w-3 h-3 mr-1" />
+                                            <SelectValue placeholder="Retry with different model" />
+                                          </SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="Claude-Sonnet-4">Claude Sonnet 4</SelectItem>
+                                            <SelectItem value="Claude-Haiku-4.5">Claude Haiku 4.5</SelectItem>
+                                            <SelectItem value="gemini-2.0-flash-exp">Gemini 2.0 Flash</SelectItem>
+                                            <SelectItem value="gemini-2.5-pro">Gemini 2.5 Pro</SelectItem>
+                                            <SelectItem value="GPT-4o">GPT-4o</SelectItem>
+                                            <SelectItem value="GPT-4o-Mini">GPT-4o Mini</SelectItem>
+                                            <SelectItem value="Llama-3.1-405B">Llama 3.1 405B</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                        {message.model && (
+                                          <span className="text-xs text-gray-500">
+                                            (used {message.model})
+                                          </span>
+                                        )}
+                                      </div>
                                     </div>
                                   )}
                                 </div>
