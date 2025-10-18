@@ -9,13 +9,14 @@ export const poe = new OpenAI({
 // Available models from Poe's OpenAI-compatible API
 export const POE_MODELS = [
   // GPT Models
+  { value: "gpt-5-pro", label: "GPT-5 Pro", category: "GPT", reasoning: false },
   { value: "GPT-5", label: "GPT-5 (Latest Flagship)", category: "GPT", reasoning: false },
   { value: "GPT-5-mini", label: "GPT-5 Mini", category: "GPT", reasoning: false },
   { value: "GPT-4o", label: "GPT-4o", category: "GPT", reasoning: false },
   { value: "GPT-4.1", label: "GPT-4.1", category: "GPT", reasoning: false },
   
   // Claude Models
-  { value: "Claude-Sonnet-4.5", label: "Claude Sonnet 4.5", category: "Claude", reasoning: true },
+  { value: "claude-sonnet-4.5", label: "Claude Sonnet 4.5", category: "Claude", reasoning: true },
   { value: "Claude-Opus-4.1", label: "Claude Opus 4.1", category: "Claude", reasoning: false },
   { value: "Claude-Sonnet-4", label: "Claude Sonnet 4 (30k thinking)", category: "Claude", reasoning: true },
   { value: "Claude-3.5-Sonnet", label: "Claude 3.5 Sonnet", category: "Claude", reasoning: false },

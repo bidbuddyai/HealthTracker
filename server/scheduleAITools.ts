@@ -480,9 +480,15 @@ Provide:
   
   try {
     const aiModel = request.model || 'Claude-Sonnet-4';
-    console.log(`Sending request to AI model ${aiModel}...`);
-    console.log('POE_API_KEY exists:', !!process.env.POE_API_KEY);
-    console.log('API Key first 10 chars:', process.env.POE_API_KEY?.substring(0, 10));
+    console.log(`\n=== POE API REQUEST DEBUG ===`);
+    console.log(`Model: ${aiModel}`);
+    console.log(`Uploaded Files Count: ${request.uploadedFiles?.length || 0}`);
+    console.log(`Uploaded Files:`, request.uploadedFiles);
+    console.log(`Document Analyses Count: ${documentAnalyses.length}`);
+    console.log(`Uploaded Content Length: ${uploadedContent.length} chars`);
+    console.log(`Prompt Length: ${prompt.length} chars`);
+    console.log(`Prompt Preview:`, prompt.substring(0, 500) + '...');
+    console.log(`===========================\n`);
     
     let response;
     try {
