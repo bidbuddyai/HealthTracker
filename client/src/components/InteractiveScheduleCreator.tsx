@@ -36,6 +36,17 @@ interface ModelInfo {
 const POE_MODELS: ModelInfo[] = [
   // Latest GPT Models (OpenAI)
   { 
+    value: "gpt-5-pro", 
+    label: "GPT-5 Pro", 
+    category: "GPT", 
+    description: "OpenAI's most advanced professional model with superior reasoning",
+    contextLength: "200K",
+    speed: "Medium",
+    quality: "Excellent",
+    cost: "High",
+    recommended: true
+  },
+  { 
     value: "GPT-5", 
     label: "GPT-5 (Latest Flagship)", 
     category: "GPT", 
@@ -122,6 +133,17 @@ const POE_MODELS: ModelInfo[] = [
   },
 
   // Claude Models (Anthropic)
+  { 
+    value: "claude-sonnet-4.5", 
+    label: "Claude Sonnet 4.5", 
+    category: "Claude", 
+    description: "Latest Claude Sonnet with enhanced reasoning and performance improvements",
+    contextLength: "200K",
+    speed: "Medium",
+    quality: "Excellent",
+    cost: "High",
+    recommended: true
+  },
   { 
     value: "Claude-Opus-4.1", 
     label: "Claude Opus 4.1 (Latest Flagship)", 

@@ -25,12 +25,14 @@ interface AssistantResponse {
 // Available models from Poe's OpenAI-compatible API
 const POE_MODELS = [
   // GPT Models
+  { value: "gpt-5-pro", label: "GPT-5 Pro", category: "GPT" },
   { value: "GPT-5", label: "GPT-5 (Latest)", category: "GPT" },
   { value: "GPT-5-mini", label: "GPT-5 Mini", category: "GPT" },
   { value: "GPT-4o", label: "GPT-4o", category: "GPT" },
   { value: "GPT-4.1", label: "GPT-4.1", category: "GPT" },
   
   // Claude Models
+  { value: "claude-sonnet-4.5", label: "Claude Sonnet 4.5", category: "Claude" },
   { value: "Claude-Opus-4.1", label: "Claude Opus 4.1", category: "Claude" },
   { value: "Claude-Sonnet-4", label: "Claude Sonnet 4 (30k thinking)", category: "Claude" },
   { value: "Claude-3.5-Sonnet", label: "Claude 3.5 Sonnet", category: "Claude" },

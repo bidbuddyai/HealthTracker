@@ -101,12 +101,14 @@ interface ChatMessage {
 // Available models from Poe's OpenAI-compatible API
 const POE_MODELS = [
   // Claude Models
+  { value: "claude-sonnet-4.5", label: "Claude Sonnet 4.5", category: "Claude" },
   { value: "Claude-Sonnet-4", label: "Claude Sonnet 4 (Best Overall)", category: "Claude" },
   { value: "Claude-3-Haiku", label: "Claude 3 Haiku (Fast)", category: "Claude" },
   { value: "Claude-3-Opus", label: "Claude 3 Opus (Advanced)", category: "Claude" },
   { value: "Claude-3.5-Sonnet", label: "Claude 3.5 Sonnet", category: "Claude" },
   
   // GPT Models
+  { value: "gpt-5-pro", label: "GPT-5 Pro", category: "GPT" },
   { value: "GPT-5", label: "GPT-5 (Latest)", category: "GPT" },
   { value: "GPT-4o", label: "GPT-4o (Optimized)", category: "GPT" },
   { value: "GPT-4-Turbo", label: "GPT-4 Turbo", category: "GPT" },
