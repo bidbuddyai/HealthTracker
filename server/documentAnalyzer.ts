@@ -1,4 +1,4 @@
-import { ObjectStorageService } from "./objectStorage";
+import { ObjectStorageService, replitStorageClient } from "./objectStorage";
 
 export interface DocumentSection {
   id: string;
@@ -356,8 +356,20 @@ function splitIntoSections(content: string, fileName: string): DocumentSection[]
 
 // Main document analysis function
 export async function analyzeDocument(filePath: string): Promise<DocumentAnalysis> {
-  const objectStorage = new ObjectStorageService();
-  const content = await objectStorage.readObjectContent(filePath);
+  // Use Replit storage client to read the file
+  let content: string;
+  try {
+    const { ok, value, error } = await replitStorageClient.downloadAsText(filePath);
+    if (!ok) {
+      console.error("Failed to read file from storage:", error);
+      throw new Error(`Failed to read file: ${filePath}`);
+    }
+    content = value;
+  } catch (error) {
+    console.error("Error reading file:", filePath, error);
+    throw new Error(`Could not read file: ${filePath}`);
+  }
+  
   const fileName = filePath.split('/').pop() || filePath;
   const totalSize = content.length;
   const totalTokens = estimateTokens(content);

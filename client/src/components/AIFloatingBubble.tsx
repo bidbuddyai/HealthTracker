@@ -552,49 +552,44 @@ The schedule now reflects your requested changes. What else would you like to mo
     );
   };
 
-  // Helper function to upload files manually and get object paths
+  // Helper function to upload files manually using direct upload
   const uploadFilesManually = async (files: File[]): Promise<string[]> => {
     const objectPaths: string[] = [];
     
     for (const file of files) {
       try {
-        // Get upload URL
-        const uploadUrlResponse = await apiRequest("POST", "/api/objects/upload", {});
-        if (!uploadUrlResponse.ok) {
-          console.error('Failed to get upload URL for:', file.name);
-          continue;
-        }
+        // Convert file to base64
+        const readFileAsBase64 = (file: File): Promise<string> => {
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const base64 = (reader.result as string).split(',')[1];
+              resolve(base64);
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+        };
         
-        const { url } = await uploadUrlResponse.json();
+        const fileContent = await readFileAsBase64(file);
         
-        // Upload file to storage
-        const uploadResponse = await fetch(url, {
-          method: 'PUT',
-          body: file,
-          headers: {
-            'Content-Type': file.type || 'application/octet-stream'
-          }
-        });
-        
-        if (!uploadResponse.ok) {
-          console.error('Failed to upload file:', file.name);
-          continue;
-        }
-        
-        // Finalize upload
-        const finalizeResponse = await apiRequest("POST", "/api/objects/finalize", {
-          uploadUrl: url,
+        // Upload file directly with base64 content
+        const uploadResponse = await apiRequest("POST", "/api/objects/upload-direct", {
           fileName: file.name,
-          fileSize: file.size,
+          fileContent: fileContent,
           fileType: file.type || 'application/octet-stream',
           projectId: projectId,
-          category: 'Document',
-          description: 'AI Schedule Generation Document'
+          description: 'AI Schedule Generation Document',
+          category: 'Document'
         });
         
-        if (finalizeResponse.ok) {
-          const data = await finalizeResponse.json();
+        if (uploadResponse.ok) {
+          const data = await uploadResponse.json();
           objectPaths.push(data.objectPath);
+          console.log(`Successfully uploaded ${file.name} to ${data.objectPath}`);
+        } else {
+          const error = await uploadResponse.json();
+          console.error('Failed to upload file:', file.name, error);
         }
       } catch (error) {
         console.error('Error uploading file:', file.name, error);

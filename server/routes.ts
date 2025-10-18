@@ -15,7 +15,7 @@ import { generateScheduleWithAI, identifyScheduleImpacts } from "./scheduleAIToo
 import { poe, POE_MODELS, streamLLMWithReasoning, queryLLM } from "./poeClient";
 import { SYSTEM_ASSISTANT, ToolSchema } from "./assistantTools";
 import { registerScheduleRoutes } from "./scheduleRoutes";
-import { ObjectStorageService } from "./objectStorage";
+import { ObjectStorageService, replitStorageClient } from "./objectStorage";
 import { analyzeDocuments, type DocumentAnalysis, type ProcessingOptions } from "./documentAnalyzer";
 
 // Project authorization helper
@@ -2407,7 +2407,7 @@ Return ONLY the enhanced prompt text, nothing else.`;
     }
   });
 
-  // Direct file upload endpoint (workaround for object storage sidecar issues)
+  // Direct file upload endpoint using Replit Object Storage client
   app.post("/api/objects/upload-direct", isAuthenticated, async (req, res) => {
     try {
       const userId = (req as any).user?.claims?.sub;
@@ -2419,12 +2419,24 @@ Return ONLY the enhanced prompt text, nothing else.`;
         });
       }
 
-      // Store file content in database directly as base64
-      const fileSize = Buffer.from(fileContent, 'base64').length;
-      const objectPath = `/objects/uploads/${Date.now()}-${Math.random().toString(36).substring(7)}`;
+      // Generate unique object path
+      const timestamp = Date.now();
+      const randomId = Math.random().toString(36).substring(7);
+      const objectPath = `uploads/${timestamp}-${randomId}-${fileName}`;
       
-      // Create attachment record with embedded file content
-      const attachment = await storage.createAttachmentWithContent({
+      // Store file in Replit Object Storage
+      const fileBuffer = Buffer.from(fileContent, 'base64');
+      const { ok, error } = await replitStorageClient.uploadFromBytes(objectPath, fileBuffer);
+      
+      if (!ok) {
+        console.error("Failed to upload to Replit storage:", error);
+        return res.status(500).json({ error: "Failed to upload file to storage" });
+      }
+      
+      const fileSize = fileBuffer.length;
+      
+      // Create attachment record in database
+      const attachment = await storage.createAttachment({
         projectId,
         fileName,
         fileSize,
@@ -2432,8 +2444,7 @@ Return ONLY the enhanced prompt text, nothing else.`;
         storageUrl: objectPath,
         uploadedBy: userId,
         description: description || null,
-        category: category || 'Document',
-        fileContent // Store base64 content directly
+        category: category || 'Document'
       });
       
       res.json({
@@ -2447,7 +2458,7 @@ Return ONLY the enhanced prompt text, nothing else.`;
     }
   });
 
-  // Generate presigned upload URL for object storage (keeping for backwards compatibility)
+  // Generate presigned upload URL for object storage (no longer needed but kept for compatibility)
   app.post("/api/objects/upload", isAuthenticated, async (req, res) => {
     try {
       const userId = (req as any).user?.claims?.sub;
@@ -2456,29 +2467,14 @@ Return ONLY the enhanced prompt text, nothing else.`;
         return res.status(401).json({ error: "User not authenticated" });
       }
 
-      // Generate presigned upload URL using ObjectStorageService
-      const objectStorage = new ObjectStorageService();
-      const uploadUrl = await objectStorage.getObjectEntityUploadURL();
-      
+      // Since presigned URLs aren't working, we'll return a signal to use direct upload
       res.json({
-        method: "PUT",
-        url: uploadUrl
+        method: "DIRECT",
+        url: "/api/objects/upload-direct"
       });
     } catch (error) {
-      console.error("Error generating upload URL:", error);
-      // Provide more specific error message for debugging
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      if (errorMessage.includes("Failed to sign object URL") || errorMessage.includes("401")) {
-        console.error("Sidecar authentication failed - using fallback upload method");
-        // Return a simple mock URL for now to test the rest of the flow
-        const mockUrl = `https://storage.googleapis.com/${process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID || 'replit-objstore'}/uploads/${Date.now()}-${Math.random().toString(36).substring(7)}`;
-        res.json({
-          method: "PUT",
-          url: mockUrl
-        });
-      } else {
-        res.status(500).json({ error: "Failed to generate upload URL: " + errorMessage });
-      }
+      console.error("Error in upload endpoint:", error);
+      res.status(500).json({ error: "Failed to process upload request" });
     }
   });
 

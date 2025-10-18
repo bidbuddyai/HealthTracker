@@ -9,6 +9,10 @@ import {
   setObjectAclPolicy,
 } from "./objectAcl";
 
+// Import the official Replit Object Storage client
+import { Client } from '@replit/object-storage';
+export const replitStorageClient = new Client();
+
 const REPLIT_SIDECAR_ENDPOINT = "http://127.0.0.1:1106";
 
 export const objectStorageClient = new Storage({
