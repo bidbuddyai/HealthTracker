@@ -545,7 +545,7 @@ Provide:
           { role: "user", content: prompt }
         ],
         temperature: 0.2,
-        max_tokens: 8000
+        max_tokens: 20000
       });
       
       // Set 90 second timeout for complex schedule generation
