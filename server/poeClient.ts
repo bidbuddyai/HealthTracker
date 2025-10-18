@@ -17,6 +17,7 @@ export const POE_MODELS = [
   
   // Claude Models
   { value: "claude-sonnet-4.5", label: "Claude Sonnet 4.5", category: "Claude", reasoning: true },
+  { value: "claude-haiku-4.5", label: "Claude Haiku 4.5", category: "Claude", reasoning: false },
   { value: "Claude-Opus-4.1", label: "Claude Opus 4.1", category: "Claude", reasoning: false },
   { value: "Claude-Sonnet-4", label: "Claude Sonnet 4 (30k thinking)", category: "Claude", reasoning: true },
   { value: "Claude-3.5-Sonnet", label: "Claude 3.5 Sonnet", category: "Claude", reasoning: false },
