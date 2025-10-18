@@ -9,6 +9,7 @@ import type {
   TiaFragnet, InsertTiaFragnet, TiaDelay, InsertTiaDelay,
   TiaResult, InsertTiaResult, ScheduleUpdate, InsertScheduleUpdate,
   ImportExportHistory, InsertImportExportHistory, AiContext, InsertAiContext,
+  AiConversation, InsertAiConversation, AiMessage, InsertAiMessage,
   ActivityCode, InsertActivityCode,
   ActivityComment, InsertActivityComment, Attachment, InsertAttachment,
   AuditLog, InsertAuditLog, ProjectMember, InsertProjectMember,
@@ -173,6 +174,17 @@ export interface IStorage {
   getScheduleVersions(projectId: string): Promise<ScheduleVersion[]>;
   createScheduleVersion(version: InsertScheduleVersion): Promise<ScheduleVersion>;
   restoreScheduleVersion(versionId: string): Promise<boolean>;
+  
+  // AI Conversations
+  getConversationsByProject(projectId: string): Promise<AiConversation[]>;
+  getConversation(id: string): Promise<AiConversation | undefined>;
+  getActiveConversation(projectId: string): Promise<AiConversation | undefined>;
+  createConversation(conversation: InsertAiConversation): Promise<AiConversation>;
+  updateConversation(id: string, updates: Partial<AiConversation>): Promise<AiConversation | undefined>;
+  
+  // AI Messages
+  getMessagesByConversation(conversationId: string): Promise<AiMessage[]>;
+  createMessage(message: InsertAiMessage): Promise<AiMessage>;
 }
 
 export class MemStorage implements IStorage {
@@ -195,6 +207,8 @@ export class MemStorage implements IStorage {
   private scheduleUpdates = new Map<string, ScheduleUpdate>();
   private importExportHistory = new Map<string, ImportExportHistory>();
   private aiContext = new Map<string, AiContext>();
+  private aiConversations = new Map<string, AiConversation>();
+  private aiMessages = new Map<string, AiMessage>();
   private activityCodes = new Map<string, ActivityCode>();
   private activityComments = new Map<string, ActivityComment>();
   private attachments = new Map<string, Attachment>();
@@ -1768,6 +1782,76 @@ export class MemStorage implements IStorage {
     });
     
     return true;
+  }
+
+  // AI Conversations
+  async getConversationsByProject(projectId: string): Promise<AiConversation[]> {
+    return Array.from(this.aiConversations.values())
+      .filter(c => c.projectId === projectId)
+      .sort((a, b) => b.lastMessageAt.getTime() - a.lastMessageAt.getTime());
+  }
+
+  async getConversation(id: string): Promise<AiConversation | undefined> {
+    return this.aiConversations.get(id);
+  }
+
+  async getActiveConversation(projectId: string): Promise<AiConversation | undefined> {
+    const conversations = await this.getConversationsByProject(projectId);
+    return conversations[0]; // Most recent conversation
+  }
+
+  async createConversation(conversation: InsertAiConversation): Promise<AiConversation> {
+    const id = randomUUID();
+    const now = new Date();
+    const newConversation: AiConversation = {
+      ...conversation,
+      id,
+      title: conversation.title ?? null,
+      createdAt: now,
+      updatedAt: now,
+      lastMessageAt: now
+    };
+    this.aiConversations.set(id, newConversation);
+    return newConversation;
+  }
+
+  async updateConversation(id: string, updates: Partial<AiConversation>): Promise<AiConversation | undefined> {
+    const conversation = this.aiConversations.get(id);
+    if (!conversation) return undefined;
+    
+    const updated: AiConversation = {
+      ...conversation,
+      ...updates,
+      updatedAt: new Date()
+    };
+    this.aiConversations.set(id, updated);
+    return updated;
+  }
+
+  // AI Messages
+  async getMessagesByConversation(conversationId: string): Promise<AiMessage[]> {
+    return Array.from(this.aiMessages.values())
+      .filter(m => m.conversationId === conversationId)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
+
+  async createMessage(message: InsertAiMessage): Promise<AiMessage> {
+    const id = randomUUID();
+    const newMessage: AiMessage = {
+      ...message,
+      id,
+      model: message.model ?? null,
+      metadata: message.metadata ?? null,
+      createdAt: new Date()
+    };
+    this.aiMessages.set(id, newMessage);
+    
+    // Update conversation's lastMessageAt
+    await this.updateConversation(message.conversationId, {
+      lastMessageAt: newMessage.createdAt
+    });
+    
+    return newMessage;
   }
 }
 

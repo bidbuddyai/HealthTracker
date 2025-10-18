@@ -9,6 +9,7 @@ import type {
   TiaFragnet, InsertTiaFragnet, TiaDelay, InsertTiaDelay,
   TiaResult, InsertTiaResult, ScheduleUpdate, InsertScheduleUpdate,
   ImportExportHistory, InsertImportExportHistory, AiContext, InsertAiContext,
+  AiConversation, InsertAiConversation, AiMessage, InsertAiMessage,
   ActivityCode, InsertActivityCode,
   ActivityComment, InsertActivityComment, Attachment, InsertAttachment,
   AuditLog, InsertAuditLog, ProjectMember, InsertProjectMember,
@@ -19,7 +20,7 @@ import {
   users, projects, wbs, activities, relationships, calendars,
   resources, resourceAssignments, baselines, baselineActivities, tiaScenarios, tiaFragnets,
   tiaDelays, tiaResults, scheduleUpdates, importExportHistory,
-  aiContext, activityCodes, activityComments, attachments,
+  aiContext, aiConversations, aiMessages, activityCodes, activityComments, attachments,
   auditLogs, projectMembers, scheduleVersions
 } from "@shared/schema";
 
@@ -1315,6 +1316,101 @@ export class DbStorage implements IStorage {
     } catch (error) {
       console.error("Error restoring schedule version:", error);
       return false;
+    }
+  }
+
+  // AI Conversations
+  async getConversationsByProject(projectId: string): Promise<AiConversation[]> {
+    try {
+      return await db
+        .select()
+        .from(aiConversations)
+        .where(eq(aiConversations.projectId, projectId))
+        .orderBy(sql`${aiConversations.lastMessageAt} DESC`);
+    } catch (error) {
+      console.error("Error getting conversations:", error);
+      return [];
+    }
+  }
+
+  async getConversation(id: string): Promise<AiConversation | undefined> {
+    try {
+      const result = await db.select().from(aiConversations).where(eq(aiConversations.id, id)).limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting conversation:", error);
+      return undefined;
+    }
+  }
+
+  async getActiveConversation(projectId: string): Promise<AiConversation | undefined> {
+    try {
+      const result = await db
+        .select()
+        .from(aiConversations)
+        .where(eq(aiConversations.projectId, projectId))
+        .orderBy(sql`${aiConversations.lastMessageAt} DESC`)
+        .limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting active conversation:", error);
+      return undefined;
+    }
+  }
+
+  async createConversation(insertConversation: InsertAiConversation): Promise<AiConversation> {
+    try {
+      const result = await db.insert(aiConversations).values(insertConversation).returning();
+      return result[0];
+    } catch (error) {
+      console.error("Error creating conversation:", error);
+      throw error;
+    }
+  }
+
+  async updateConversation(id: string, updates: Partial<AiConversation>): Promise<AiConversation | undefined> {
+    try {
+      const result = await db
+        .update(aiConversations)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(aiConversations.id, id))
+        .returning();
+      return result[0];
+    } catch (error) {
+      console.error("Error updating conversation:", error);
+      return undefined;
+    }
+  }
+
+  // AI Messages
+  async getMessagesByConversation(conversationId: string): Promise<AiMessage[]> {
+    try {
+      return await db
+        .select()
+        .from(aiMessages)
+        .where(eq(aiMessages.conversationId, conversationId))
+        .orderBy(aiMessages.createdAt);
+    } catch (error) {
+      console.error("Error getting messages:", error);
+      return [];
+    }
+  }
+
+  async createMessage(insertMessage: InsertAiMessage): Promise<AiMessage> {
+    try {
+      const result = await db.insert(aiMessages).values(insertMessage).returning();
+      const message = result[0];
+      
+      // Update conversation's lastMessageAt
+      await db
+        .update(aiConversations)
+        .set({ lastMessageAt: message.createdAt })
+        .where(eq(aiConversations.id, insertMessage.conversationId));
+      
+      return message;
+    } catch (error) {
+      console.error("Error creating message:", error);
+      throw error;
     }
   }
 }
