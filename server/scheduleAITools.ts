@@ -537,8 +537,8 @@ Provide:
       console.log('Making POE API request to:', 'https://api.poe.com/v1/chat/completions');
       console.log('Using model:', aiModel);
       
-      // Add timeout to prevent hanging
-      const apiCall = poe.chat.completions.create({
+      // The OpenAI client is already configured with a 5-minute timeout in poeClient.ts
+      response = await poe.chat.completions.create({
         model: aiModel,
         messages: [
           { role: "system", content: SCHEDULE_SYSTEM_PROMPT },
@@ -547,13 +547,6 @@ Provide:
         temperature: 0.2,
         max_tokens: 20000
       });
-      
-      // Set 90 second timeout for complex schedule generation
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('POE API timeout after 90 seconds')), 90000);
-      });
-      
-      response = await Promise.race([apiCall, timeoutPromise]);
     } catch (apiError: any) {
       console.error('POE API Error:', apiError);
       console.error('POE API Error Message:', apiError.message);
