@@ -2330,6 +2330,227 @@ Return ONLY the enhanced prompt text, nothing else.`;
             break;
             
           // Schedule Tools
+          case "createSchedule":
+            // Create a new schedule with activities and relationships
+            const scheduleActivities = validated.args.activities || [];
+            const createdActivities = [];
+            const createdRelationships = [];
+            const targetProjectId = validated.args.projectId || projectId;
+            const activityIdMap = new Map(); // Map user-defined IDs to database IDs
+            
+            // First pass: Create all activities
+            for (const actData of scheduleActivities) {
+              const userDefinedId = actData.id || actData.activityId || `ACT_${Date.now()}_${Math.random()}`;
+              // Store the generated ID back on the activity data for second pass
+              if (!actData.id && !actData.activityId) {
+                actData.activityId = userDefinedId;
+              }
+              
+              const newActivity = await storage.createActivity({
+                projectId: targetProjectId,
+                activityId: userDefinedId,
+                name: actData.name || "Untitled Activity",
+                originalDuration: actData.duration || 0,
+                remainingDuration: actData.duration || 0,
+                wbsId: actData.wbsId || null,
+                type: actData.type || "Task",
+                status: actData.status || "NotStarted",
+                percentComplete: actData.percentComplete || 0,
+                earlyStart: actData.startDate || actData.earlyStart,
+                earlyFinish: actData.finishDate || actData.earlyFinish,
+                notes: actData.notes,
+                responsibility: actData.responsibility,
+                trade: actData.trade
+              });
+              createdActivities.push(newActivity);
+              activityIdMap.set(userDefinedId, newActivity.id);
+            }
+            
+            // Second pass: Create relationships based on predecessors
+            for (const actData of scheduleActivities) {
+              const userDefinedId = actData.id || actData.activityId;
+              const successorDbId = activityIdMap.get(userDefinedId);
+              
+              if (successorDbId && actData.predecessors && Array.isArray(actData.predecessors)) {
+                for (const pred of actData.predecessors) {
+                  // pred can be a string ID or an object with {id, type, lag}
+                  const predId = typeof pred === 'string' ? pred : pred.id;
+                  const relType = (typeof pred === 'object' && pred.type) ? pred.type : 'FS';
+                  const lagValue = (typeof pred === 'object' && pred.lag) ? pred.lag : 0;
+                  
+                  const predecessorDbId = activityIdMap.get(predId);
+                  if (predecessorDbId) {
+                    const relationship = await storage.createRelationship({
+                      projectId: targetProjectId,
+                      predecessorId: predecessorDbId,
+                      successorId: successorDbId,
+                      type: relType,
+                      lag: lagValue
+                    });
+                    createdRelationships.push(relationship);
+                  }
+                }
+              }
+            }
+            
+            result = {
+              createdCount: createdActivities.length,
+              relationshipCount: createdRelationships.length,
+              activities: createdActivities,
+              relationships: createdRelationships,
+              message: `Successfully created ${createdActivities.length} activities and ${createdRelationships.length} relationships`
+            };
+            break;
+            
+          case "updateSchedule":
+            // Update multiple activities based on the updates array
+            const updates = validated.args.updates || [];
+            const updatedActivities = [];
+            
+            for (const update of updates) {
+              const activity = await storage.getActivity(update.activityId);
+              if (!activity) continue;
+              
+              // Map AI-facing field names to actual database columns
+              const dbUpdates: any = {};
+              
+              switch (update.field) {
+                case "duration":
+                  // Duration updates both original and remaining
+                  dbUpdates.originalDuration = update.value;
+                  dbUpdates.remainingDuration = update.value;
+                  break;
+                case "originalDuration":
+                  dbUpdates.originalDuration = update.value;
+                  break;
+                case "remainingDuration":
+                  dbUpdates.remainingDuration = update.value;
+                  break;
+                case "startDate":
+                  dbUpdates.earlyStart = update.value;
+                  break;
+                case "finishDate":
+                  dbUpdates.earlyFinish = update.value;
+                  break;
+                case "earlyStart":
+                case "earlyFinish":
+                case "lateStart":
+                case "lateFinish":
+                case "actualStart":
+                case "actualFinish":
+                  dbUpdates[update.field] = update.value;
+                  break;
+                case "status":
+                  // Validate status enum
+                  if (["NotStarted", "InProgress", "Completed"].includes(update.value)) {
+                    dbUpdates.status = update.value;
+                  }
+                  break;
+                case "percentComplete":
+                  dbUpdates.percentComplete = update.value;
+                  // Auto-set status based on percent complete
+                  if (update.value === 0) {
+                    dbUpdates.status = "NotStarted";
+                  } else if (update.value >= 100) {
+                    dbUpdates.status = "Completed";
+                  } else {
+                    dbUpdates.status = "InProgress";
+                  }
+                  break;
+                case "name":
+                  dbUpdates.name = update.value;
+                  break;
+                case "wbs":
+                  dbUpdates.wbsId = update.value;
+                  break;
+                case "constraint":
+                case "constraintType":
+                  if (["SNET", "FNET", "SNLT", "FNLT", "MSO", "MFO"].includes(update.value)) {
+                    dbUpdates.constraintType = update.value;
+                  }
+                  break;
+                case "constraintDate":
+                  dbUpdates.constraintDate = update.value;
+                  break;
+                case "notes":
+                  dbUpdates.notes = update.value;
+                  break;
+                case "responsibility":
+                  dbUpdates.responsibility = update.value;
+                  break;
+                case "trade":
+                  dbUpdates.trade = update.value;
+                  break;
+                default:
+                  // For any other field, try to set it directly
+                  dbUpdates[update.field] = update.value;
+              }
+              
+              const updatedActivity = await storage.updateActivity(update.activityId, dbUpdates);
+              if (updatedActivity) {
+                updatedActivities.push(updatedActivity);
+              }
+            }
+            
+            result = {
+              updatedCount: updatedActivities.length,
+              activities: updatedActivities,
+              message: `Successfully updated ${updatedActivities.length} activities`
+            };
+            break;
+            
+          case "generateLookahead":
+            // Generate a 3-week lookahead schedule
+            const lookaheadProjectId = validated.args.projectId || projectId;
+            const baseActivities = await storage.getActivitiesByProject(lookaheadProjectId);
+            const startDate = validated.args.startDate ? new Date(validated.args.startDate) : new Date();
+            const endDate = new Date(startDate);
+            endDate.setDate(endDate.getDate() + 21); // 3 weeks
+            
+            // Filter activities that fall within the lookahead period
+            const lookaheadActivities = baseActivities.filter(act => {
+              if (!act.earlyStart) return false;
+              const actStart = new Date(act.earlyStart);
+              return actStart >= startDate && actStart <= endDate;
+            });
+            
+            result = {
+              lookaheadPeriod: { 
+                start: startDate.toISOString().split('T')[0], 
+                end: endDate.toISOString().split('T')[0] 
+              },
+              activities: lookaheadActivities,
+              count: lookaheadActivities.length,
+              message: `Generated ${lookaheadActivities.length} activities for 3-week lookahead`
+            };
+            break;
+            
+          case "analyzeSchedule":
+            // Analyze schedule for critical path and float
+            const analyzeProjectId = validated.args.projectId || projectId;
+            const schedActivities = await storage.getActivitiesByProject(analyzeProjectId);
+            const schedRelationships = await storage.getRelationshipsByProject(analyzeProjectId);
+            
+            const criticalActivities = schedActivities.filter(a => a.isCritical);
+            const nearCriticalActivities = schedActivities.filter(a => 
+              !a.isCritical && (a.totalFloat || 0) <= 5
+            );
+            
+            result = {
+              totalActivities: schedActivities.length,
+              criticalActivities: criticalActivities.length,
+              nearCriticalActivities: nearCriticalActivities.length,
+              totalRelationships: schedRelationships.length,
+              criticalPath: criticalActivities.map(a => a.activityId),
+              longestPath: criticalActivities.map(a => ({ 
+                id: a.activityId, 
+                name: a.name, 
+                duration: a.originalDuration 
+              })),
+              message: "Schedule analysis completed"
+            };
+            break;
+            
           case "calculateCpm":
             const activities = await storage.getActivitiesByProject(validated.args.projectId || projectId);
             const relationships = await storage.getRelationshipsByProject(validated.args.projectId || projectId);
