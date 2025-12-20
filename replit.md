@@ -56,6 +56,11 @@ Preferred communication style: Simple, everyday language.
 - **Interview Mode**: Consultative generation through a state machine flow (SCOPE_GATHERING → SEQUENCE_VERIFICATION → GENERATION) with trade-aware questions and conditional logic.
 - **Direct Mode & Training Commands**: Context injection using a "Trade Knowledge Graph," constraint enforcement, and a `/train` command for explicit natural language instruction to create high-confidence user preference rules.
 - **Advanced Scheduling Features**: Complete CPM engine, support for Milestones, Level of Effort, Hammock, and WBS Summary activities, comprehensive WBS management, activity codes, custom fields, FS, SS, FF, SF relationships with lag/lead, visual schedule grid, constraint handling, progress tracking, baseline management, Time Impact Analysis (TIA), work calendars, collaboration tools (comments, attachments, role-based access), audit trail, and version history.
+- **Import Sanitation**: Data validation layer that runs during schedule imports:
+  - Orphan Detection: Flags activities with missing predecessors/successors as 'open_ended'
+  - Loop Breaking: Iterative topological sort to detect and break circular dependencies by inactivating least critical links (prioritizes SS/FF/SF over FS, higher float)
+  - Calendar Validation: Assigns default calendar to activities with missing calendar references
+  - Quality Report: Returns summary of openEnds, loops fixed, calendarsFixed, detailed warnings, and inactivated links
 
 # External Dependencies
 
