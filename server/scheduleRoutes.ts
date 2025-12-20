@@ -13,6 +13,7 @@ import { poe } from "./poeClient";
 import { parseScheduleFile } from "./scheduleParser";
 import { embeddingService } from "./embeddingService";
 import { analyzeImportedSchedule } from "./patternObserver";
+import { SanitationMiddleware, type QualityReport } from "./scheduleSanitizer";
 
 // Background function to generate embeddings for a project
 async function generateEmbeddingsForProject(projectId: string): Promise<void> {
@@ -240,13 +241,27 @@ export function registerScheduleRoutes(app: Express) {
         return res.status(400).json({ error: "No activities found in the file" });
       }
 
+      // Run Sanitation Middleware before saving to database
+      // This detects orphans, breaks loops, and validates calendars
+      const sanitizationResult = SanitationMiddleware.sanitizeActivities(parsedData.activities);
+      const sanitizedActivities = sanitizationResult.activities;
+      const qualityReport = sanitizationResult.qualityReport;
+      
+      console.log(`[Import] Sanitation complete: ${qualityReport.openEnds} open ends, ${qualityReport.loops} loops broken, ${qualityReport.calendarsFixed} calendars fixed`);
+
       // Store activities using the storage interface
       let createdCount = 0;
       let skippedCount = 0;
       let updatedCount = 0;
       
-      for (const act of parsedData.activities) {
+      for (const act of sanitizedActivities) {
         try {
+          // Include warning type in notes if activity was flagged
+          let notes = act.wbs || null;
+          if (act.warningType) {
+            notes = `[${act.warningType.toUpperCase()}] ${act.sanitizationNotes || ''} | ${notes || ''}`;
+          }
+          
           const activityData = {
             projectId: req.params.projectId,
             activityId: act.activityId,
@@ -259,7 +274,7 @@ export function registerScheduleRoutes(app: Express) {
             totalFloat: act.totalFloat || 0,
             status: act.status === "Completed" ? "Completed" as const : 
                     act.status === "In Progress" ? "InProgress" as const : "NotStarted" as const,
-            notes: act.wbs || null
+            notes
           };
           
           // Check if activity already exists
@@ -315,7 +330,7 @@ export function registerScheduleRoutes(app: Express) {
       if (userId) {
         // Map parser fields to analyzer expected fields
         // constraintType -> constraint (for constraint usage analysis)
-        analyzeImportedSchedule(userId, req.params.projectId, parsedData.activities.map(act => {
+        analyzeImportedSchedule(userId, req.params.projectId, sanitizedActivities.map(act => {
           const anyAct = act as any;
           return {
             activityId: act.activityId,
@@ -335,6 +350,12 @@ export function registerScheduleRoutes(app: Express) {
         });
       }
       
+      // Build enhanced message with quality report summary
+      if (qualityReport.openEnds > 0 || qualityReport.loops > 0) {
+        message += ` | Quality issues: ${qualityReport.openEnds} open ends`;
+        if (qualityReport.loops > 0) message += `, ${qualityReport.loops} loops fixed`;
+      }
+      
       res.json({
         success: true,
         message,
@@ -343,7 +364,14 @@ export function registerScheduleRoutes(app: Express) {
         updated: updatedCount,
         skipped: skippedCount,
         projectInfo: parsedData.projectInfo,
-        summary: parsedData.summary
+        summary: parsedData.summary,
+        qualityReport: {
+          openEnds: qualityReport.openEnds,
+          loops: qualityReport.loops,
+          calendarsFixed: qualityReport.calendarsFixed,
+          warnings: qualityReport.warnings,
+          inactivatedLinks: qualityReport.inactivatedLinks
+        }
       });
     } catch (error) {
       console.error("Error importing schedule:", error);
