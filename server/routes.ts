@@ -2111,36 +2111,61 @@ Return ONLY the enhanced prompt text, nothing else.`;
 
       const responseText = response.choices[0]?.message?.content || "";
       
-      // Try to parse as JSON for tool calls
-      try {
-        const parsed = JSON.parse(responseText);
-        const validated = ToolSchema.parse(parsed);
-        
-        // Execute the tool using the registry pattern
-        const toolContext = { projectId, userId };
-        const { result, error } = await executeTool(validated.tool, validated.args, toolContext);
-        
-        if (error) {
-          console.error(`[ToolRegistry] Error: ${error}`);
+      // Try to parse as JSON for tool calls with robust repair
+      const { repairAndParseJson, repairAndParseJsonWithRetry } = await import("./jsonRepair");
+      let parseResult = repairAndParseJson(responseText);
+      
+      // If initial repair fails, try AI retry
+      if (!parseResult.success) {
+        console.log("[AI] JSON repair failed, attempting AI retry...");
+        parseResult = await repairAndParseJsonWithRetry(
+          responseText,
+          model,
+          `${enrichedContextStr}\n\nProject ID: ${projectId}\n\nQuery: ${query}`
+        );
+      }
+      
+      if (parseResult.success && parseResult.data) {
+        try {
+          const parsed = parseResult.data;
+          if (parseResult.repairMethod !== "direct") {
+            console.log(`[AI] JSON parsed using repair method: ${parseResult.repairMethod}`);
+          }
+          const validated = ToolSchema.parse(parsed);
+          
+          // Execute the tool using the registry pattern
+          const toolContext = { projectId, userId };
+          const { result, error } = await executeTool(validated.tool, validated.args, toolContext);
+          
+          if (error) {
+            console.error(`[ToolRegistry] Error: ${error}`);
+            res.json({
+              tool: validated,
+              result: null,
+              error,
+              speak: `Failed to execute ${validated.tool}: ${error}`,
+              success: false
+            });
+            return;
+          }
+          
+          // Return the result
           res.json({
             tool: validated,
-            result: null,
-            error,
-            speak: `Failed to execute ${validated.tool}: ${error}`,
+            result,
+            speak: validated.speak || `Successfully executed ${validated.tool}`,
+            success: true
+          });
+        } catch (validationError) {
+          // Schema validation failed - return as plain text
+          res.json({
+            response: responseText,
+            speak: responseText,
             success: false
           });
-          return;
         }
-        
-        // Return the result
-        res.json({
-          tool: validated,
-          result,
-          speak: validated.speak || `Successfully executed ${validated.tool}`,
-          success: true
-        });
-      } catch (parseError) {
-        // Return as plain text response if not a tool call
+      } else {
+        // JSON repair failed completely - return as plain text response
         res.json({
           response: responseText,
           speak: responseText,

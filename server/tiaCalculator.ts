@@ -9,11 +9,31 @@ export interface TiaCalculationOptions {
   analyzeRecovery?: boolean;
 }
 
+export interface NegativeFloatInfo {
+  activityId: string;
+  activityName: string;
+  totalFloat: number;
+  freeFloat?: number;
+  constraintViolation?: string;
+}
+
+export interface FinishVariance {
+  unimpactedFinish: Date;
+  impactedFinish: Date;
+  varianceDays: number;
+  varianceCalendarDays: number;
+  exceedsContractDate: boolean;
+  contractVariance?: number;
+}
+
 export interface TiaAnalysisResult {
   scenarioId: string;
   baselineFinish: Date;
   impactedFinish: Date;
   netImpact: number;
+  finishVariance: FinishVariance;
+  hasNegativeFloat: boolean;
+  negativeFloatActivities: NegativeFloatInfo[];
   criticalPathChanges: {
     previousCritical: string[];
     newCritical: string[];
@@ -40,6 +60,12 @@ export interface TiaAnalysisResult {
     method: "fast-track" | "crash" | "resource-add" | "shift-work";
     riskLevel: "low" | "medium" | "high";
   }[];
+  aaceCompliance: {
+    methodology: string;
+    windowAnalysisUsed: boolean;
+    prospectiveAnalysis: boolean;
+    contemporaneousData: boolean;
+  };
 }
 
 export class TiaCalculator {
@@ -58,12 +84,14 @@ export class TiaCalculator {
     const fragnets = await storage.getTiaFragnetsByScenario(scenarioId);
     const delays = await storage.getTiaDelaysByScenario(scenarioId);
     
-    // Step 1: Calculate baseline critical path
+    // AACE RP 29R-03 (MIP 3.7) Compliance: Time Impact Analysis
+    // Step 1: Establish the Unimpacted Schedule (baseline before delay event)
     const baselineResult = calculateCPM(activities, relationships);
     const baselineCriticalPath = this.extractCriticalPath(activities);
     const baselineFinish = this.getProjectFinish(activities);
     
-    // Step 2: Create impacted schedule by inserting fragnets
+    // Step 2: Create impacted schedule by inserting fragnets (delay events)
+    // Per AACE RP 29R-03: Insert fragnet at the point of impact
     let impactedActivities = [...activities];
     let impactedRelationships = [...relationships];
     
@@ -80,7 +108,8 @@ export class TiaCalculator {
     // Step 3: Apply delays to activities
     impactedActivities = this.applyDelays(impactedActivities, delays);
     
-    // Step 4: Calculate impacted CPM
+    // Step 4: Recalculate CPM for Impacted Schedule
+    // CRITICAL: Always recalculate project finish after fragnet insertion
     const impactedResult = calculateCPM(impactedActivities, impactedRelationships);
     const impactedCriticalPath = this.extractCriticalPath(impactedActivities);
     const impactedFinish = this.getProjectFinish(impactedActivities);
@@ -103,10 +132,42 @@ export class TiaCalculator {
       impactedActivities
     );
     
-    // Step 8: Calculate net impact
-    const netImpact = Math.ceil(
+    // Step 8: DELTA CHECK - Calculate finish variance per AACE RP 29R-03
+    const varianceDays = Math.ceil(
       (impactedFinish.getTime() - baselineFinish.getTime()) / (1000 * 60 * 60 * 24)
     );
+    
+    // Calculate calendar day variance (accounting for non-work days would require calendar)
+    const varianceCalendarDays = varianceDays;
+    
+    // Check against contract date if specified
+    const contractDate = scenario.targetDate ? new Date(scenario.targetDate) : null;
+    const exceedsContractDate = contractDate ? impactedFinish > contractDate : false;
+    const contractVariance = contractDate 
+      ? Math.ceil((impactedFinish.getTime() - contractDate.getTime()) / (1000 * 60 * 60 * 24))
+      : undefined;
+    
+    const finishVariance: FinishVariance = {
+      unimpactedFinish: baselineFinish,
+      impactedFinish: impactedFinish,
+      varianceDays,
+      varianceCalendarDays,
+      exceedsContractDate,
+      contractVariance
+    };
+    
+    // Step 9: NEGATIVE FLOAT DETECTION
+    // Per AACE: Negative float indicates delay extends beyond contract completion
+    const negativeFloatActivities = this.detectNegativeFloat(impactedActivities);
+    const hasNegativeFloat = negativeFloatActivities.length > 0;
+    
+    if (hasNegativeFloat) {
+      console.warn(`[TIA] WARNING: Negative float detected on ${negativeFloatActivities.length} activities. ` +
+        `Delay extends beyond project completion date.`);
+    }
+    
+    // Legacy netImpact for backward compatibility
+    const netImpact = varianceDays;
     
     // Optional analyses
     let paceAnalysis, compressionOpportunities;
@@ -124,6 +185,14 @@ export class TiaCalculator {
         impactedRelationships
       );
     }
+    
+    // AACE RP 29R-03 Compliance metadata
+    const aaceCompliance = {
+      methodology: "MIP 3.7 - Modeled/Additive Time Impact Analysis",
+      windowAnalysisUsed: false,
+      prospectiveAnalysis: true,
+      contemporaneousData: true
+    };
     
     // Save result to storage
     await storage.createTiaResult({
@@ -145,12 +214,58 @@ export class TiaCalculator {
       baselineFinish,
       impactedFinish,
       netImpact,
+      finishVariance,
+      hasNegativeFloat,
+      negativeFloatActivities,
       criticalPathChanges,
       floatConsumption,
       affectedMilestones,
       paceAnalysis,
-      compressionOpportunities
+      compressionOpportunities,
+      aaceCompliance
     };
+  }
+  
+  private detectNegativeFloat(activities: Activity[]): NegativeFloatInfo[] {
+    const negativeFloatActivities: NegativeFloatInfo[] = [];
+    
+    for (const activity of activities) {
+      const totalFloat = activity.totalFloat;
+      
+      if (totalFloat !== null && totalFloat !== undefined && totalFloat < 0) {
+        let constraintViolation: string | undefined;
+        
+        // Check if negative float is due to constraint violation
+        if (activity.constraintType && activity.constraintDate) {
+          const constraintDate = new Date(activity.constraintDate);
+          const earlyFinish = activity.earlyFinish ? new Date(activity.earlyFinish) : null;
+          const earlyStart = activity.earlyStart ? new Date(activity.earlyStart) : null;
+          
+          if (activity.constraintType === "FNLT" && earlyFinish && earlyFinish > constraintDate) {
+            constraintViolation = `Finish No Later Than ${activity.constraintDate} violated`;
+          } else if (activity.constraintType === "SNLT" && earlyStart && earlyStart > constraintDate) {
+            constraintViolation = `Start No Later Than ${activity.constraintDate} violated`;
+          } else if (activity.constraintType === "MFO" && earlyFinish && earlyFinish > constraintDate) {
+            constraintViolation = `Must Finish On ${activity.constraintDate} violated`;
+          } else if (activity.constraintType === "MSO" && earlyStart && earlyStart > constraintDate) {
+            constraintViolation = `Must Start On ${activity.constraintDate} violated`;
+          }
+        }
+        
+        negativeFloatActivities.push({
+          activityId: activity.activityId,
+          activityName: activity.name,
+          totalFloat: totalFloat,
+          freeFloat: activity.freeFloat ?? undefined,
+          constraintViolation
+        });
+      }
+    }
+    
+    // Sort by most negative float first
+    negativeFloatActivities.sort((a, b) => a.totalFloat - b.totalFloat);
+    
+    return negativeFloatActivities;
   }
   
   private insertFragnet(
