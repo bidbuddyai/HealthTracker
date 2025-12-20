@@ -20,6 +20,16 @@ import { ObjectStorageService, replitStorageClient } from "./objectStorage";
 import { analyzeDocuments, type DocumentAnalysis, type ProcessingOptions } from "./documentAnalyzer";
 import { ragService } from "./ragService";
 import { observeScheduleSave } from "./patternObserver";
+import { 
+  createInterviewSession, 
+  getInterviewSession, 
+  submitAnswer, 
+  confirmPlanAndGenerate, 
+  getCurrentQuestion,
+  getSessionSummary,
+  deleteSession,
+  type InterviewAnswer
+} from "./interviewStateMachine";
 
 // Project authorization helper
 async function hasProjectAccess(userId: string, projectId: string): Promise<boolean> {
@@ -2211,6 +2221,166 @@ Return ONLY the enhanced prompt text, nothing else.`;
   // Get available AI models
   app.get("/api/ai/models", isAuthenticated, async (req, res) => {
     res.json(POE_MODELS);
+  });
+
+  // Interview Mode Routes - Consultative Schedule Generation
+  
+  // Start a new interview session
+  app.post("/api/ai/interview/start", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { projectId } = req.body;
+      
+      // Get user's trade preference
+      const user = await storage.getUser(userId);
+      const trade = user?.primaryTrade || "General Contractor";
+      
+      const session = createInterviewSession(userId, trade, projectId);
+      const firstQuestion = getCurrentQuestion(session);
+      
+      res.json({
+        sessionId: session.id,
+        state: session.state,
+        trade: session.trade,
+        currentQuestion: firstQuestion,
+        totalQuestions: session.questions.length
+      });
+    } catch (error) {
+      console.error("Error starting interview:", error);
+      res.status(500).json({ error: "Failed to start interview session" });
+    }
+  });
+
+  // Get current interview session status
+  app.get("/api/ai/interview/:sessionId", isAuthenticated, async (req: any, res) => {
+    try {
+      const { sessionId } = req.params;
+      const session = getInterviewSession(sessionId);
+      
+      if (!session) {
+        return res.status(404).json({ error: "Interview session not found" });
+      }
+      
+      const userId = req.user?.claims?.sub;
+      if (session.userId !== userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const summary = getSessionSummary(sessionId);
+      const currentQuestion = getCurrentQuestion(session);
+      
+      res.json({
+        sessionId: session.id,
+        state: session.state,
+        trade: session.trade,
+        currentQuestion,
+        answers: session.answers,
+        plan: session.schedulePlan,
+        progress: summary?.progress || 0,
+        answeredQuestions: summary?.answeredQuestions || 0,
+        totalQuestions: summary?.totalQuestions || 0
+      });
+    } catch (error) {
+      console.error("Error getting interview session:", error);
+      res.status(500).json({ error: "Failed to get interview session" });
+    }
+  });
+
+  // Submit an answer to the current question
+  app.post("/api/ai/interview/:sessionId/answer", isAuthenticated, async (req: any, res) => {
+    try {
+      const { sessionId } = req.params;
+      const session = getInterviewSession(sessionId);
+      
+      if (!session) {
+        return res.status(404).json({ error: "Interview session not found" });
+      }
+      
+      const userId = req.user?.claims?.sub;
+      if (session.userId !== userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const answer: InterviewAnswer = req.body;
+      const result = submitAnswer(sessionId, answer);
+      
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+      
+      const summary = getSessionSummary(sessionId);
+      const updatedSession = getInterviewSession(sessionId);
+      
+      res.json({
+        success: true,
+        nextQuestion: result.nextQuestion,
+        stateChange: result.stateChange,
+        state: updatedSession?.state,
+        plan: updatedSession?.schedulePlan,
+        progress: summary?.progress || 0,
+        answeredQuestions: summary?.answeredQuestions || 0,
+        totalQuestions: summary?.totalQuestions || 0
+      });
+    } catch (error) {
+      console.error("Error submitting interview answer:", error);
+      res.status(500).json({ error: "Failed to submit answer" });
+    }
+  });
+
+  // Confirm the plan and proceed to generation
+  app.post("/api/ai/interview/:sessionId/confirm", isAuthenticated, async (req: any, res) => {
+    try {
+      const { sessionId } = req.params;
+      const session = getInterviewSession(sessionId);
+      
+      if (!session) {
+        return res.status(404).json({ error: "Interview session not found" });
+      }
+      
+      const userId = req.user?.claims?.sub;
+      if (session.userId !== userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      const result = confirmPlanAndGenerate(sessionId);
+      
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+      
+      res.json({
+        success: true,
+        state: "GENERATION",
+        plan: result.plan,
+        message: "Plan confirmed. Ready to generate schedule."
+      });
+    } catch (error) {
+      console.error("Error confirming interview plan:", error);
+      res.status(500).json({ error: "Failed to confirm plan" });
+    }
+  });
+
+  // Delete/cancel an interview session
+  app.delete("/api/ai/interview/:sessionId", isAuthenticated, async (req: any, res) => {
+    try {
+      const { sessionId } = req.params;
+      const session = getInterviewSession(sessionId);
+      
+      if (!session) {
+        return res.status(404).json({ error: "Interview session not found" });
+      }
+      
+      const userId = req.user?.claims?.sub;
+      if (session.userId !== userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      deleteSession(sessionId);
+      res.json({ success: true, message: "Interview session cancelled" });
+    } catch (error) {
+      console.error("Error deleting interview session:", error);
+      res.status(500).json({ error: "Failed to delete interview session" });
+    }
   });
 
   // RAG Status endpoint - check embedding status for a project

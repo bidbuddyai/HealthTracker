@@ -28,6 +28,16 @@ Preferred communication style: Simple, everyday language.
 - **Scope Detection**: Identifies required predecessors for specific project types (e.g., "Notify Air Quality Board" before "Start" on Abatement projects)
 - **Background Processing**: Runs asynchronously on every schedule save without blocking user operations
 
+## Interview Mode (Consultative Generation)
+- **State Machine Flow**: SCOPE_GATHERING → SEQUENCE_VERIFICATION → GENERATION states for guided schedule creation
+- **Trade-Aware Questions**: Dynamic question sets based on user's trade:
+  - Abatement/Demo: Building count, utility handling, containment type, hazmat types, regulatory notifications
+  - General Contractor: Project phasing, concrete self-perform, project type, critical trades, owner milestones
+  - MEP Subcontractor: Scope (mechanical/electrical/plumbing), new vs retrofit, coordination, prefabrication
+- **Conditional Logic**: Follow-up questions appear based on previous answers (e.g., phase count only shown if project is phased)
+- **Plan Summary**: Before generation, displays structured plan with phases, estimated activities, and human-readable summary
+- **Confirmation Step**: User reviews and approves plan before schedule generation begins
+
 ## Advanced Scheduling Features
 - **Complete CPM Engine**: Full Critical Path Method calculations with forward/backward pass, float calculations, and constraint handling
 - **Advanced Activity Types**: Support for Milestones (zero duration), Level of Effort activities, Hammock activities (spanning), and WBS Summary rollups
