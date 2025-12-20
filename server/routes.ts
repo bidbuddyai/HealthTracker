@@ -2610,6 +2610,75 @@ Return ONLY the enhanced prompt text, nothing else.`;
   // Register schedule-related routes (includes export functionality)
   registerScheduleRoutes(app);
 
+  // Onboarding - Brain Load API
+  app.post("/api/onboarding/brain-load", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const { primaryTrade, templateCategories } = req.body;
+      
+      if (!primaryTrade || !templateCategories || !Array.isArray(templateCategories)) {
+        return res.status(400).json({ error: "Missing required fields: primaryTrade and templateCategories" });
+      }
+
+      // 1. Update user profile with trade selection
+      const user = await storage.getUser(userId);
+      if (user) {
+        await storage.upsertUser({
+          ...user,
+          primaryTrade: primaryTrade,
+          specialties: templateCategories
+        });
+      }
+
+      // 2. Fetch templates for selected categories and copy rules to user's learned rules
+      let rulesLoaded = 0;
+      for (const category of templateCategories) {
+        const templates = await storage.getTradeTemplatesByCategory(category);
+        
+        for (const template of templates) {
+          const logicRules = template.logicRules as Array<{
+            predecessorKeyword: string;
+            successorKeyword: string;
+            relationshipType: string;
+            lag?: number;
+            description?: string;
+          }>;
+
+          // Copy each logic rule to user's personal learned rules
+          for (const rule of logicRules) {
+            await storage.createUserLearnedRule({
+              userId,
+              triggerKeyword: rule.predecessorKeyword,
+              ruleType: "must_precede",
+              targetKeyword: rule.successorKeyword,
+              confidenceScore: 100, // Template rules start with max confidence
+              occurrenceCount: 1,
+              isActive: true
+            });
+            rulesLoaded++;
+          }
+        }
+      }
+
+      console.log(`[Brain Load] Loaded ${rulesLoaded} rules for user ${userId} from categories: ${templateCategories.join(", ")}`);
+
+      res.json({ 
+        success: true, 
+        message: `Loaded ${rulesLoaded} scheduling rules from ${templateCategories.length} trade template(s)`,
+        rulesLoaded,
+        primaryTrade,
+        templateCategories
+      });
+    } catch (error) {
+      console.error("Error during brain load:", error);
+      res.status(500).json({ error: "Failed to load trade preferences" });
+    }
+  });
+
   // Trade Templates API - Adaptive Learning
   app.get("/api/trade-templates", isAuthenticated, async (req, res) => {
     try {

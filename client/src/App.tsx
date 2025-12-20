@@ -9,18 +9,24 @@ import NotFound from "@/pages/not-found";
 import Projects from "@/pages/projects";
 import ProjectDetail from "@/pages/project-detail";
 import Landing from "@/pages/Landing";
+import Onboarding from "@/pages/onboarding";
 import Calendar from "@/pages/calendar";
 import Calendars from "@/pages/calendars";
 import { TimeImpactAnalysis } from "@/pages/time-impact-analysis";
 import { useAuth } from "@/hooks/useAuth";
 
 function Router() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { user, isAuthenticated, isLoading } = useAuth();
+
+  // Check if user needs onboarding (no primary trade set)
+  const needsOnboarding = isAuthenticated && user && !user.primaryTrade;
 
   return (
     <Switch>
       {isLoading || !isAuthenticated ? (
         <Route path="/" component={Landing} />
+      ) : needsOnboarding ? (
+        <Route path="/" component={Onboarding} />
       ) : (
         <>
           <Route path="/" component={Projects} />
@@ -30,6 +36,7 @@ function Router() {
           <Route path="/calendar" component={Calendar} />
           <Route path="/calendars" component={Calendars} />
           <Route path="/project/:projectId/calendars" component={Calendars} />
+          <Route path="/onboarding" component={Onboarding} />
         </>
       )}
       <Route component={NotFound} />
