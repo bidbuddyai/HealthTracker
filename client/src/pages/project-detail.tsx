@@ -13,9 +13,17 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ChangeEvent } from "react";
 import type { Project, Activity, Wbs, Relationship, Calendar } from "@shared/schema";
 import { Skeleton } from "@/components/ui/skeleton";
 import { motion, AnimatePresence } from "framer-motion";
@@ -34,10 +42,12 @@ import {
   Sparkles,
   Bot,
   Download,
+  Upload,
   FileText,
   FileCode,
   FileSpreadsheet,
-  FileImage
+  FileImage,
+  RefreshCw
 } from "lucide-react";
 import ScheduleGrid from "@/components/ScheduleGrid";
 import GanttChart from "@/components/GanttChart";
@@ -60,6 +70,9 @@ export default function ProjectDetail() {
   const [selectedActivityId, setSelectedActivityId] = useState<string | null>(null);
   const [showActivityDialog, setShowActivityDialog] = useState(false);
   const [openAIModal, setOpenAIModal] = useState(false);
+  const [showImportDialog, setShowImportDialog] = useState(false);
+  const [importFileContent, setImportFileContent] = useState("");
+  const [importFilename, setImportFilename] = useState("");
   
   // Check if we should open AI modal (when coming from project creation)
   useEffect(() => {
@@ -175,6 +188,63 @@ export default function ProjectDetail() {
       return;
     }
     exportMutation.mutate(format);
+  };
+
+  // Import mutation
+  const importMutation = useMutation({
+    mutationFn: async (data: { fileContent: string; filename: string }) => {
+      const response = await apiRequest("POST", `/api/projects/${id}/schedules/import`, data);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id, "activities"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id, "relationships"] });
+      setShowImportDialog(false);
+      setImportFileContent("");
+      setImportFilename("");
+      toast({
+        title: "Import Successful",
+        description: data.message || `Imported ${data.activitiesCount || 0} activities.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Import Failed",
+        description: error.message || "Failed to import schedule. Please check the file format.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Handle file selection for import
+  const handleImportFileSelect = (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setImportFilename(file.name);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setImportFileContent(event.target?.result as string);
+      };
+      // For binary files like MPP, read as text with fallback encoding
+      if (file.name.toLowerCase().endsWith('.mpp')) {
+        reader.readAsText(file, 'latin1');
+      } else {
+        reader.readAsText(file);
+      }
+    }
+  };
+
+  // Handle import submit
+  const handleImportSubmit = () => {
+    if (!importFileContent || !importFilename) {
+      toast({
+        title: "No File Selected",
+        description: "Please select a schedule file to import.",
+        variant: "destructive",
+      });
+      return;
+    }
+    importMutation.mutate({ fileContent: importFileContent, filename: importFilename });
   };
 
   if (projectLoading || activitiesLoading || relationshipsLoading || wbsLoading || calendarsLoading) {
@@ -334,6 +404,71 @@ export default function ProjectDetail() {
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
+
+              {/* Import Dialog */}
+              <Dialog open={showImportDialog} onOpenChange={setShowImportDialog}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" data-testid="button-import">
+                    <Upload className="w-4 h-4 mr-2" />
+                    Import
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-lg">
+                  <DialogHeader>
+                    <DialogTitle>Import Schedule File</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-4">
+                    <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+                      <h4 className="font-medium mb-2">Supported Formats:</h4>
+                      <ul className="text-sm text-gray-600 dark:text-gray-400 space-y-1">
+                        <li>• <strong>XER</strong> - Primavera P6 native format</li>
+                        <li>• <strong>XML/MSPDI</strong> - MS Project XML format</li>
+                        <li>• <strong>MPP</strong> - MS Project native format</li>
+                        <li>• <strong>PDF</strong> - Schedule reports from P6/MSP</li>
+                      </ul>
+                    </div>
+                    <div>
+                      <Label htmlFor="import-file">Select Schedule File</Label>
+                      <input
+                        id="import-file"
+                        type="file"
+                        accept=".xer,.xml,.mspdi,.mpx,.mpp,.pdf"
+                        onChange={handleImportFileSelect}
+                        className="block w-full text-sm text-gray-500 dark:text-gray-400 mt-2
+                          file:mr-4 file:py-2 file:px-4
+                          file:rounded-md file:border-0
+                          file:text-sm file:font-semibold
+                          file:bg-primary file:text-primary-foreground
+                          hover:file:bg-primary/90"
+                        data-testid="input-import-file"
+                      />
+                    </div>
+                    {importFileContent && (
+                      <div className="text-sm text-gray-600 dark:text-gray-400">
+                        File loaded: {importFilename} ({importFileContent.length.toLocaleString()} characters)
+                      </div>
+                    )}
+                    <Button 
+                      onClick={handleImportSubmit}
+                      disabled={!importFileContent || importMutation.isPending}
+                      className="w-full"
+                      data-testid="button-import-submit"
+                    >
+                      {importMutation.isPending ? (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2 animate-spin" />
+                          Importing Schedule...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-4 h-4 mr-2" />
+                          Import Schedule
+                        </>
+                      )}
+                    </Button>
+                  </div>
+                </DialogContent>
+              </Dialog>
 
               <Button onClick={handleNewActivity} size="sm" data-testid="button-new-activity">
                 <Circle className="w-4 h-4 mr-2" />
