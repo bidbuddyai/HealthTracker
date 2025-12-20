@@ -26,19 +26,19 @@ export class XERParser {
       const trimmed = line.trim();
       if (!trimmed || trimmed.startsWith('ERMHDR')) continue;
       
-      // Table definition
+      // Table definition - handle both %T\t and %T  formats
       if (trimmed.startsWith('%T')) {
-        currentTable = trimmed.substring(3);
+        currentTable = trimmed.substring(2).replace(/^\s+/, '').trim();
         this.tables.set(currentTable, []);
       }
       // Column definition
       else if (trimmed.startsWith('%F')) {
-        const cols = trimmed.substring(3).split('\t');
+        const cols = trimmed.substring(2).replace(/^\s+/, '').split('\t');
         this.columns.set(currentTable, cols);
       }
       // Row data
       else if (trimmed.startsWith('%R') && currentTable) {
-        const values = trimmed.substring(3).split('\t');
+        const values = trimmed.substring(2).replace(/^\s+/, '').split('\t');
         const cols = this.columns.get(currentTable) || [];
         const row: any = {};
         cols.forEach((col, idx) => {
@@ -48,48 +48,82 @@ export class XERParser {
       }
     }
     
+    // Build WBS hierarchy map from PROJWBS table
+    const wbsMap = this.buildWbsHierarchy();
+    
+    // Build task code lookup from task_id
+    const taskIdToCode = this.buildTaskCodeMap();
+    
     // Extract activities from TASK table
     const tasks = this.tables.get('TASK') || [];
     const taskpred = this.tables.get('TASKPRED') || [];
     
     // Build predecessor map with relationship type and lag
-    const predMap = new Map<string, { predId: string; relType: string; lag: number }[]>();
+    // Store raw activity codes for compatibility, metadata stored separately
+    const predMap = new Map<string, { predCode: string; relType: string; lag: number }[]>();
+    const succMap = new Map<string, string[]>();
+    
     taskpred.forEach(pred => {
       const taskId = pred.task_id;
       const predId = pred.pred_task_id;
-      const relType = pred.pred_type || 'FS'; // PR_FS, PR_SS, PR_FF, PR_SF
+      const taskCode = taskIdToCode.get(taskId) || taskId;
+      const predCode = taskIdToCode.get(predId) || predId;
+      const relType = pred.pred_type || 'FS';
       const lag = parseFloat(pred.lag_hr_cnt) / 8 || 0;
       
       if (!predMap.has(taskId)) {
         predMap.set(taskId, []);
       }
-      predMap.get(taskId)?.push({ predId, relType: this.mapRelType(relType), lag });
+      predMap.get(taskId)?.push({ predCode, relType: this.mapRelType(relType), lag });
+      
+      // Build successor map
+      if (!succMap.has(predId)) {
+        succMap.set(predId, []);
+      }
+      succMap.get(predId)?.push(taskCode);
     });
     
     // Convert to our Activity format with constraint and relationship data
     const activities: Activity[] = tasks.map((task, index) => {
       const preds = predMap.get(task.task_id) || [];
+      const succs = succMap.get(task.task_id) || [];
       const firstPred = preds[0];
+      
+      // Store raw activity IDs for compatibility with downstream processing
+      // Relationship types and lags are stored in the firstPred metadata
+      const predecessorIds = preds.map(p => p.predCode);
+      
+      // Get WBS path from hierarchy
+      const wbsPath = wbsMap.get(task.wbs_id) || task.wbs_id || '';
       
       return {
         id: crypto.randomUUID(),
         activityId: task.task_code || task.task_id || `A${(index + 1).toString().padStart(3, '0')}`,
         activityName: task.task_name || 'Unnamed Activity',
+        activityType: this.mapP6ActivityTypeToEnum(task.task_type),
         duration: parseInt(task.target_drtn_hr_cnt) / 8 || parseInt(task.remain_drtn_hr_cnt) / 8 || 1,
-        predecessors: preds.map(p => p.predId),
-        successors: [],
+        predecessors: predecessorIds,
+        successors: succs,
         status: this.mapStatus(task.status_code),
         percentComplete: parseFloat(task.phys_complete_pct) || 0,
-        startDate: this.formatDate(task.target_start_date || task.act_start_date),
-        finishDate: this.formatDate(task.target_end_date || task.act_end_date),
-        wbs: task.wbs_id || '',
+        startDate: this.formatDate(task.target_start_date || task.act_start_date || task.early_start_date),
+        finishDate: this.formatDate(task.target_end_date || task.act_end_date || task.early_end_date),
+        earlyStart: this.formatDate(task.early_start_date),
+        earlyFinish: this.formatDate(task.early_end_date),
+        lateStart: this.formatDate(task.late_start_date),
+        lateFinish: this.formatDate(task.late_end_date),
+        wbs: wbsPath,
+        wbsCode: wbsPath,
         resources: [],
         totalFloat: parseFloat(task.total_float_hr_cnt) / 8 || 0,
         freeFloat: parseFloat(task.free_float_hr_cnt) / 8 || 0,
+        isCritical: (parseFloat(task.total_float_hr_cnt) || 0) <= 0,
         constraintType: this.mapConstraintType(task.cstr_type),
         constraintDate: this.formatDate(task.cstr_date),
         relationshipType: firstPred?.relType || 'FS',
-        lag: firstPred?.lag || 0
+        lag: firstPred?.lag || 0,
+        notes: task.task_memo || undefined,
+        externalUid: parseInt(task.task_id) || undefined
       } as Activity;
     });
     
@@ -99,13 +133,86 @@ export class XERParser {
     return {
       activities,
       projectInfo: {
-        name: project.proj_short_name,
+        name: project.proj_short_name || project.name,
         startDate: this.formatDate(project.plan_start_date),
-        finishDate: this.formatDate(project.plan_end_date),
+        finishDate: this.formatDate(project.plan_end_date || project.scd_end_date),
         dataDate: this.formatDate(project.last_recalc_date)
       },
-      summary: `Imported P6 schedule with ${activities.length} activities`
+      summary: `Imported P6 XER schedule with ${activities.length} activities`
     };
+  }
+  
+  private buildWbsHierarchy(): Map<string, string> {
+    const wbsMap = new Map<string, string>();
+    const wbsTable = this.tables.get('PROJWBS') || [];
+    
+    if (wbsTable.length === 0) return wbsMap;
+    
+    // Build lookup by wbs_id
+    const wbsById = new Map<string, any>();
+    wbsTable.forEach(wbs => {
+      wbsById.set(wbs.wbs_id, wbs);
+    });
+    
+    // Recursive function to build full WBS path
+    const buildPath = (wbsId: string): string => {
+      const wbs = wbsById.get(wbsId);
+      if (!wbs) return '';
+      
+      const parentPath = wbs.parent_wbs_id ? buildPath(wbs.parent_wbs_id) : '';
+      const shortName = wbs.wbs_short_name || wbs.wbs_name || '';
+      
+      return parentPath ? `${parentPath}.${shortName}` : shortName;
+    };
+    
+    // Build paths for all WBS elements
+    wbsTable.forEach(wbs => {
+      wbsMap.set(wbs.wbs_id, buildPath(wbs.wbs_id));
+    });
+    
+    return wbsMap;
+  }
+  
+  private buildTaskCodeMap(): Map<string, string> {
+    const taskMap = new Map<string, string>();
+    const tasks = this.tables.get('TASK') || [];
+    
+    tasks.forEach(task => {
+      taskMap.set(task.task_id, task.task_code || task.task_id);
+    });
+    
+    return taskMap;
+  }
+  
+  private mapP6ActivityType(taskType: string): string {
+    const typeMap: Record<string, string> = {
+      'TT_Task': 'Task Dependent',
+      'TT_Rsrc': 'Resource Dependent',
+      'TT_Mile': 'Milestone',
+      'TT_FinMile': 'Finish Milestone',
+      'TT_LOE': 'Level of Effort',
+      'TT_WBS': 'WBS Summary'
+    };
+    
+    const mapped = typeMap[taskType];
+    if (mapped) return mapped;
+    
+    console.log(`Unknown P6 activity type: ${taskType}, defaulting to Standard Task`);
+    return 'Standard Task';
+  }
+  
+  private mapP6ActivityTypeToEnum(taskType: string): string {
+    // Map P6 activity types to schema-compatible enum values
+    const typeMap: Record<string, string> = {
+      'TT_Task': 'Task',
+      'TT_Rsrc': 'Task',
+      'TT_Mile': 'Milestone',
+      'TT_FinMile': 'Milestone',
+      'TT_LOE': 'LOE',
+      'TT_WBS': 'WBSSummary'
+    };
+    
+    return typeMap[taskType] || 'Task';
   }
   
   private mapStatus(statusCode: string): Activity['status'] {

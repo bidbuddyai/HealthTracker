@@ -373,59 +373,100 @@ export class DependencyValidator {
 
 // XER Exporter for Primavera P6
 export class XERExporter {
-  private tables: Map<string, any[]> = new Map();
   private currentDate = new Date().toISOString().replace(/T/, ' ').replace(/\..+/, '');
   
   export(data: ExportData): string {
     const { schedule, activities, projectName } = data;
     let output = '';
     
-    // XER Header
-    output += 'ERMHDR\t1.0\tProject\t' + this.currentDate + '\tPrimavera\tP6\n';
+    // XER Header - Primavera P6 format
+    output += 'ERMHDR\t18.8.0\tScheduleSam\t' + this.currentDate + '\tPrimavera\tP6 Professional\n';
+    
+    // Currency table
     output += '%T\tCURRENCY\n';
-    output += '%F\tcurr_id\tcurr_symbol\tcurr_type\n';
-    output += '%R\t1\t$\tUS Dollar\n';
+    output += '%F\tcurr_id\tcurr_short_name\tdecimal_digit_cnt\tcurr_symbol\tdecimal_symbol\tdigit_group_symbol\tpositive_curr_fmt_type\tneg_curr_fmt_type\tcurr_type\tbase_exch_rate\n';
+    output += '%R\t1\tUSD\t2\t$\t.\t,\t0\t0\tUS Dollar\t1\n';
     
     // Project table
     output += '%T\tPROJECT\n';
-    output += '%F\tproj_id\tproj_short_name\tplan_start_date\tplan_end_date\tlast_recalc_date\n';
-    output += '%R\t1\t' + (projectName || 'Project') + '\t' + schedule.startDate + '\t' + schedule.finishDate + '\t' + schedule.dataDate + '\n';
+    output += '%F\tproj_id\tproj_short_name\tplan_start_date\tplan_end_date\tscd_end_date\tlast_recalc_date\tcritical_path_type\tdef_complete_pct_type\tsum_data_flag\n';
+    output += '%R\t1\t' + this.escapeField(projectName || 'Project') + '\t' + 
+              this.formatP6Date(schedule.startDate) + '\t' + 
+              this.formatP6Date(schedule.finishDate) + '\t' + 
+              this.formatP6Date(schedule.finishDate) + '\t' + 
+              this.formatP6Date(schedule.dataDate) + '\tCT_TotalFloat\tCP_Phys\tN\n';
     
     // Calendar table
     output += '%T\tCALENDAR\n';
-    output += '%F\tcalendar_id\tcalendar_name\tdefault_flag\n';
-    output += '%R\t1\tStandard\tY\n';
+    output += '%F\tclndr_id\tclndr_name\tdefault_flag\tproj_id\tday_hr_cnt\tweek_hr_cnt\tmonth_hr_cnt\tyear_hr_cnt\n';
+    output += '%R\t1\tStandard 5 Day\tY\t1\t8\t40\t172\t2000\n';
+    
+    // Build WBS hierarchy from activities
+    const wbsElements = this.buildWbsElements(activities);
+    
+    // PROJWBS table
+    output += '%T\tPROJWBS\n';
+    output += '%F\twbs_id\tproj_id\tobs_id\tseq_num\test_wt\tproj_node_flag\tsum_data_flag\tstatus_code\twbs_short_name\twbs_name\tparent_wbs_id\n';
+    
+    // Root WBS element
+    output += '%R\t1\t1\t\t1\t1\tY\tN\tWS_Open\t' + this.escapeField(projectName || 'Project') + '\t' + 
+              this.escapeField(projectName || 'Project') + '\t\n';
+    
+    wbsElements.forEach((wbs, index) => {
+      output += '%R\t' + (index + 2) + '\t1\t\t' + (index + 2) + '\t1\tN\tN\tWS_Open\t' + 
+                this.escapeField(wbs.shortName) + '\t' + this.escapeField(wbs.name) + '\t' + wbs.parentId + '\n';
+    });
+    
+    // Build activity ID to task_id map
+    const activityIdMap = new Map<string, number>();
+    activities.forEach((act, index) => {
+      activityIdMap.set(act.activityId, index + 1);
+    });
     
     // Task table
     output += '%T\tTASK\n';
-    output += '%F\ttask_id\ttask_code\ttask_name\ttask_type\tstatus_code\ttarget_start_date\ttarget_end_date\ttarget_drtn_hr_cnt\tremain_drtn_hr_cnt\tphys_complete_pct\ttotal_float_hr_cnt\tfree_float_hr_cnt\twbs_id\n';
+    output += '%F\ttask_id\tproj_id\twbs_id\tclndr_id\tphys_complete_pct\trev_fdbk_flag\test_wt\ttask_code\ttask_name\ttask_type\tduration_type\tstatus_code\ttarget_start_date\ttarget_end_date\tearly_start_date\tearly_end_date\tlate_start_date\tlate_end_date\tact_start_date\tact_end_date\ttarget_drtn_hr_cnt\tremain_drtn_hr_cnt\ttotal_float_hr_cnt\tfree_float_hr_cnt\n';
     
     activities.forEach((act, index) => {
+      const taskId = index + 1;
       const statusCode = this.mapStatusToP6(act.status || 'Not Started');
+      const taskType = this.mapActivityTypeToP6(act as any);
       const duration = (act.originalDuration || 0) * 8; // Convert days to hours
-      const remainingDuration = (act.remainingDuration || 0) * 8;
-      const percentComplete = act.status === 'Completed' ? 100 : 
-                             act.status === 'In Progress' ? 50 : 0;
+      const remainingDuration = (act.remainingDuration || act.originalDuration || 0) * 8;
+      const percentComplete = act.percentComplete || (act.status === 'Completed' ? 100 : act.status === 'InProgress' ? 50 : 0);
       const totalFloat = (act.totalFloat || 0) * 8;
+      const freeFloat = (act.freeFloat || 0) * 8;
       
-      output += '%R\t' + (index + 1) + '\t' + act.activityId + '\t' + act.activityName + '\tTask Activity\t' + 
-                statusCode + '\t' + act.startDate + '\t' + act.finishDate + '\t' + 
-                duration + '\t' + remainingDuration + '\t' + percentComplete + '\t' + 
-                totalFloat + '\t0\t' + (act.notes || '') + '\n';
+      // Find WBS ID
+      const wbsId = this.findWbsId(act, wbsElements);
+      
+      output += '%R\t' + taskId + '\t1\t' + wbsId + '\t1\t' + percentComplete + '\tN\t1\t' + 
+                this.escapeField(act.activityId) + '\t' + this.escapeField(act.activityName) + '\t' + 
+                taskType + '\tDT_FixedDrtn\t' + statusCode + '\t' + 
+                this.formatP6Date(act.startDate || act.earlyStart) + '\t' + 
+                this.formatP6Date(act.finishDate || act.earlyFinish) + '\t' + 
+                this.formatP6Date(act.earlyStart) + '\t' + this.formatP6Date(act.earlyFinish) + '\t' + 
+                this.formatP6Date(act.lateStart) + '\t' + this.formatP6Date(act.lateFinish) + '\t' +
+                (act.status === 'InProgress' || act.status === 'Completed' ? this.formatP6Date(act.actualStart) : '') + '\t' +
+                (act.status === 'Completed' ? this.formatP6Date(act.actualFinish) : '') + '\t' +
+                duration + '\t' + remainingDuration + '\t' + totalFloat + '\t' + freeFloat + '\n';
     });
     
-    // Task predecessors table
+    // Task predecessors table with relationship types
     output += '%T\tTASKPRED\n';
-    output += '%F\ttaskpred_id\ttask_id\tpred_task_id\tpred_type\tlag_hr_cnt\n';
+    output += '%F\ttask_pred_id\ttask_id\tpred_task_id\tproj_id\tpred_proj_id\tpred_type\tlag_hr_cnt\n';
     
     let predId = 1;
     activities.forEach((act, index) => {
       if (act.predecessors) {
-        const predList = act.predecessors.split(',').filter(p => p);
+        const predList = act.predecessors.split(',').filter(p => p.trim());
         predList.forEach(pred => {
-          const predIndex = activities.findIndex(a => a.activityId === pred.trim());
-          if (predIndex >= 0) {
-            output += '%R\t' + predId + '\t' + (index + 1) + '\t' + (predIndex + 1) + '\tFS\t0\n';
+          const { activityId: predActId, relType, lag } = this.parsePredecessor(pred.trim());
+          const predIndex = activityIdMap.get(predActId);
+          if (predIndex) {
+            const p6RelType = this.mapRelTypeToP6(relType);
+            const lagHours = lag * 8;
+            output += '%R\t' + predId + '\t' + (index + 1) + '\t' + predIndex + '\t1\t1\t' + p6RelType + '\t' + lagHours + '\n';
             predId++;
           }
         });
@@ -436,11 +477,92 @@ export class XERExporter {
     return output;
   }
   
+  private escapeField(value: string): string {
+    if (!value) return '';
+    return value.replace(/\t/g, ' ').replace(/\n/g, ' ').replace(/\r/g, '');
+  }
+  
+  private formatP6Date(dateStr?: string | null): string {
+    if (!dateStr) return '';
+    const datePart = dateStr.split('T')[0];
+    return datePart + ' 08:00';
+  }
+  
+  private buildWbsElements(activities: ScheduleActivity[]): Array<{ id: number; shortName: string; name: string; parentId: number; path: string }> {
+    const wbsSet = new Set<string>();
+    const wbsElements: Array<{ id: number; shortName: string; name: string; parentId: number; path: string }> = [];
+    
+    activities.forEach(act => {
+      const wbs = act.notes || ''; // WBS stored in notes field for ScheduleActivity
+      if (wbs && !wbsSet.has(wbs)) {
+        wbsSet.add(wbs);
+        const parts = wbs.split('.');
+        const shortName = parts[parts.length - 1] || wbs;
+        wbsElements.push({
+          id: wbsElements.length + 2, // Start from 2 (1 is root)
+          shortName,
+          name: wbs,
+          parentId: 1, // All under root for simplicity
+          path: wbs
+        });
+      }
+    });
+    
+    return wbsElements;
+  }
+  
+  private findWbsId(act: ScheduleActivity, wbsElements: Array<{ id: number; path: string }>): number {
+    const actWbs = act.notes || '';
+    const found = wbsElements.find(w => w.path === actWbs);
+    return found ? found.id : 1; // Default to root
+  }
+  
+  private parsePredecessor(pred: string): { activityId: string; relType: string; lag: number } {
+    // Parse formats like "A100", "A100 FS", "A100 FS+2d", "A100+5d"
+    const match = pred.match(/^([A-Za-z0-9_-]+)\s*(FS|SS|FF|SF)?([+-]?\d+(?:\.\d+)?d?)?$/);
+    if (match) {
+      const activityId = match[1];
+      const relType = match[2] || 'FS';
+      let lag = 0;
+      if (match[3]) {
+        lag = parseFloat(match[3].replace('d', ''));
+      }
+      return { activityId, relType, lag };
+    }
+    return { activityId: pred, relType: 'FS', lag: 0 };
+  }
+  
   private mapStatusToP6(status: string): string {
     switch (status) {
       case 'Completed': return 'TK_Complete';
+      case 'InProgress':
       case 'In Progress': return 'TK_Active';
       default: return 'TK_NotStart';
+    }
+  }
+  
+  private mapActivityTypeToP6(act: any): string {
+    const actType = act.type || act.activityType || '';
+    switch (actType) {
+      case 'LOE':
+      case 'Level of Effort': return 'TT_LOE';
+      case 'StartMilestone':
+      case 'Milestone': return 'TT_Mile';
+      case 'FinishMilestone':
+      case 'Finish Milestone': return 'TT_FinMile';
+      case 'WBSSummary':
+      case 'WBS Summary': return 'TT_WBS';
+      default: return 'TT_Task';
+    }
+  }
+  
+  private mapRelTypeToP6(relType: string): string {
+    switch (relType) {
+      case 'FS': return 'PR_FS';
+      case 'SS': return 'PR_SS';
+      case 'FF': return 'PR_FF';
+      case 'SF': return 'PR_SF';
+      default: return 'PR_FS';
     }
   }
 }
