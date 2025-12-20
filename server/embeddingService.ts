@@ -15,7 +15,7 @@ const EMBEDDING_DIMENSIONS = 1536;
 const MAX_CHUNK_TOKENS = 750;
 
 interface ChunkData {
-  entityType: "ActivityCluster" | "WbsSection" | "CriticalPath" | "CalendarBlock" | "TiaScenario" | "MeetingNotes" | "Relationship";
+  entityType: "ActivityCluster" | "WbsSection" | "CriticalPath" | "CalendarBlock" | "TiaScenario" | "MeetingNotes" | "Relationship" | "LogicPath" | "WbsPhase";
   entityId?: string;
   chunkText: string;
   chunkSummary?: string;
@@ -75,88 +75,277 @@ export class EmbeddingService {
 
   chunkActivities(activities: Activity[], relationships: Relationship[], wbsMap: Map<string, Wbs>): ChunkData[] {
     const chunks: ChunkData[] = [];
-    const CLUSTER_SIZE = 12;
+    const NEAR_CRITICAL_FLOAT_THRESHOLD = 5;
 
-    const wbsGroups = new Map<string, Activity[]>();
-    for (const activity of activities) {
-      const wbsId = activity.wbsId || "no-wbs";
-      if (!wbsGroups.has(wbsId)) {
-        wbsGroups.set(wbsId, []);
+    const relsByActivity = new Map<string, { preds: string[], succs: string[] }>();
+    const activityById = new Map<string, Activity>();
+    
+    for (const act of activities) {
+      activityById.set(act.id, act);
+      if (!relsByActivity.has(act.id)) {
+        relsByActivity.set(act.id, { preds: [], succs: [] });
       }
-      wbsGroups.get(wbsId)!.push(activity);
+    }
+    
+    for (const rel of relationships) {
+      const predId = rel.predecessorId;
+      const succId = rel.successorId;
+      if (!relsByActivity.has(predId)) {
+        relsByActivity.set(predId, { preds: [], succs: [] });
+      }
+      if (!relsByActivity.has(succId)) {
+        relsByActivity.set(succId, { preds: [], succs: [] });
+      }
+      relsByActivity.get(predId)!.succs.push(succId);
+      relsByActivity.get(succId)!.preds.push(predId);
     }
 
-    for (const [wbsId, wbsActivities] of Array.from(wbsGroups.entries())) {
-      for (let i = 0; i < wbsActivities.length; i += CLUSTER_SIZE) {
-        const cluster = wbsActivities.slice(i, i + CLUSTER_SIZE);
-        const wbs = wbsMap.get(wbsId);
-        
-        const relsByActivity = new Map<string, { preds: string[], succs: string[] }>();
-        for (const rel of relationships) {
-          const predId = rel.predecessorId;
-          const succId = rel.successorId;
-          if (!relsByActivity.has(predId)) {
-            relsByActivity.set(predId, { preds: [], succs: [] });
-          }
-          if (!relsByActivity.has(succId)) {
-            relsByActivity.set(succId, { preds: [], succs: [] });
-          }
-          relsByActivity.get(predId)!.succs.push(succId);
-          relsByActivity.get(succId)!.preds.push(predId);
-        }
+    const getLeafWbs = (wbsId: string | null): Wbs | null => {
+      if (!wbsId) return null;
+      const wbs = wbsMap.get(wbsId);
+      if (!wbs) return null;
+      const hasChildren = Array.from(wbsMap.values()).some(w => w.parentId === wbsId);
+      if (!hasChildren) return wbs;
+      return wbs;
+    };
 
-        let chunkText = wbs 
-          ? `WBS: ${wbs.code} - ${wbs.name} (Level ${wbs.level})\n\n`
-          : "Activities without WBS:\n\n";
-        
-        chunkText += `Activities in this cluster:\n`;
-        
-        for (const act of cluster) {
-          const rels = relsByActivity.get(act.id) || { preds: [], succs: [] };
-          chunkText += `\n- ${act.activityId}: ${act.name}`;
-          chunkText += `\n  Type: ${act.type}, Duration: ${act.originalDuration || 0} days`;
-          chunkText += `\n  Status: ${act.status}, Progress: ${act.percentComplete || 0}%`;
-          if (act.earlyStart) chunkText += `\n  Early Start: ${act.earlyStart}`;
-          if (act.earlyFinish) chunkText += `, Early Finish: ${act.earlyFinish}`;
-          if (act.isCritical) chunkText += `\n  ** CRITICAL PATH **`;
-          if (act.totalFloat !== null && act.totalFloat !== undefined) {
-            chunkText += `\n  Total Float: ${act.totalFloat} days`;
-          }
-          if (rels.preds.length > 0) {
-            chunkText += `\n  Predecessors: ${rels.preds.slice(0, 3).join(", ")}${rels.preds.length > 3 ? "..." : ""}`;
-          }
-          if (rels.succs.length > 0) {
-            chunkText += `\n  Successors: ${rels.succs.slice(0, 3).join(", ")}${rels.succs.length > 3 ? "..." : ""}`;
-          }
-        }
+    const wbsParentGroups = new Map<string, Activity[]>();
+    for (const activity of activities) {
+      const lowestWbs = getLeafWbs(activity.wbsId);
+      const groupKey = lowestWbs?.id || "no-wbs";
+      if (!wbsParentGroups.has(groupKey)) {
+        wbsParentGroups.set(groupKey, []);
+      }
+      wbsParentGroups.get(groupKey)!.push(activity);
+    }
 
-        const activityIds = cluster.map(a => a.id);
-        const criticalCount = cluster.filter(a => a.isCritical).length;
+    const formatActivityForChunk = (act: Activity, rels: { preds: string[], succs: string[] }): string => {
+      let text = `\n• ${act.activityId}: ${act.name}`;
+      text += `\n  Duration: ${act.originalDuration || 0}d | Status: ${act.status} | Progress: ${act.percentComplete || 0}%`;
+      if (act.earlyStart) text += `\n  ES: ${act.earlyStart}`;
+      if (act.earlyFinish) text += ` → EF: ${act.earlyFinish}`;
+      if (act.isCritical) text += ` | ** CRITICAL **`;
+      if (act.totalFloat !== null && act.totalFloat !== undefined) {
+        text += `\n  Total Float: ${act.totalFloat}d`;
+        if (act.totalFloat < NEAR_CRITICAL_FLOAT_THRESHOLD && !act.isCritical) {
+          text += ` (NEAR-CRITICAL)`;
+        }
+      }
+      if (rels.preds.length > 0) {
+        const predNames = rels.preds.map(id => activityById.get(id)?.activityId || id).slice(0, 5);
+        text += `\n  ← Predecessors: ${predNames.join(", ")}${rels.preds.length > 5 ? ` (+${rels.preds.length - 5} more)` : ""}`;
+      }
+      if (rels.succs.length > 0) {
+        const succNames = rels.succs.map(id => activityById.get(id)?.activityId || id).slice(0, 5);
+        text += `\n  → Successors: ${succNames.join(", ")}${rels.succs.length > 5 ? ` (+${rels.succs.length - 5} more)` : ""}`;
+      }
+      return text;
+    };
+
+    for (const [wbsId, wbsActivities] of Array.from(wbsParentGroups.entries())) {
+      const wbs = wbsMap.get(wbsId);
+      const sortedActivities = [...wbsActivities].sort((a, b) => {
+        if (!a.earlyStart || !b.earlyStart) return 0;
+        return a.earlyStart.localeCompare(b.earlyStart);
+      });
+      
+      const headerText = wbs 
+        ? `[WBS Phase: ${wbs.code} - ${wbs.name}]\nLevel: ${wbs.level}\n\n`
+        : "[Activities without WBS]\n\n";
+      
+      let currentChunkActivities: Activity[] = [];
+      let currentChunkText = headerText + `Activities in this phase:\n`;
+      let partNumber = 1;
+
+      const flushChunk = () => {
+        if (currentChunkActivities.length === 0) return;
+        
+        const activityIds = currentChunkActivities.map(a => a.id);
+        const criticalCount = currentChunkActivities.filter(a => a.isCritical).length;
+        const nearCriticalCount = currentChunkActivities.filter(a => 
+          !a.isCritical && a.totalFloat !== null && a.totalFloat < NEAR_CRITICAL_FLOAT_THRESHOLD
+        ).length;
         
         chunks.push({
-          entityType: "ActivityCluster",
-          entityId: wbsId !== "no-wbs" ? wbsId : undefined,
-          chunkText,
+          entityType: "WbsPhase",
+          entityId: wbsId !== "no-wbs" ? `${wbsId}-part${partNumber}` : undefined,
+          chunkText: currentChunkText,
           metadata: {
             wbsId: wbsId !== "no-wbs" ? wbsId : null,
             wbsCode: wbs?.code,
+            wbsName: wbs?.name,
+            wbsLevel: wbs?.level,
+            partNumber,
+            totalParts: Math.ceil(sortedActivities.length / 15),
             activityIds,
-            activityCount: cluster.length,
+            activityCount: currentChunkActivities.length,
             criticalCount,
+            nearCriticalCount,
             dateRange: {
-              earliest: cluster.reduce((min, a) => 
+              earliest: currentChunkActivities.reduce((min, a) => 
                 a.earlyStart && (!min || a.earlyStart < min) ? a.earlyStart : min, 
                 null as string | null
               ),
-              latest: cluster.reduce((max, a) => 
+              latest: currentChunkActivities.reduce((max, a) => 
                 a.earlyFinish && (!max || a.earlyFinish > max) ? a.earlyFinish : max, 
                 null as string | null
               )
             }
           },
-          tokenCount: this.estimateTokens(chunkText)
+          tokenCount: this.estimateTokens(currentChunkText)
         });
+        
+        partNumber++;
+        currentChunkActivities = [];
+        currentChunkText = headerText + `Activities in this phase (continued, part ${partNumber}):\n`;
+      };
+
+      for (const act of sortedActivities) {
+        const rels = relsByActivity.get(act.id) || { preds: [], succs: [] };
+        const activityText = formatActivityForChunk(act, rels);
+        
+        if (this.estimateTokens(currentChunkText + activityText) > MAX_CHUNK_TOKENS && currentChunkActivities.length > 0) {
+          flushChunk();
+        }
+        
+        currentChunkActivities.push(act);
+        currentChunkText += activityText;
       }
+      
+      flushChunk();
+    }
+
+    const nearCriticalActivities = activities.filter(a => 
+      a.totalFloat !== null && 
+      a.totalFloat !== undefined && 
+      a.totalFloat < NEAR_CRITICAL_FLOAT_THRESHOLD
+    );
+
+    if (nearCriticalActivities.length > 0) {
+      const tracedPaths = new Set<string>();
+      const logicPathChunks = this.buildLogicPathChunks(
+        nearCriticalActivities, 
+        activityById, 
+        relsByActivity, 
+        tracedPaths,
+        NEAR_CRITICAL_FLOAT_THRESHOLD,
+        relationships
+      );
+      chunks.push(...logicPathChunks);
+    }
+
+    return chunks;
+  }
+
+  private buildLogicPathChunks(
+    seedActivities: Activity[],
+    activityById: Map<string, Activity>,
+    relsByActivity: Map<string, { preds: string[], succs: string[] }>,
+    tracedPaths: Set<string>,
+    floatThreshold: number,
+    relationships: Relationship[]
+  ): ChunkData[] {
+    const chunks: ChunkData[] = [];
+
+    const traceChain = (startId: string, direction: 'forward' | 'backward'): Activity[] => {
+      const chain: Activity[] = [];
+      const visited = new Set<string>();
+      const queue = [startId];
+
+      while (queue.length > 0) {
+        const currentId = queue.shift()!;
+        if (visited.has(currentId)) continue;
+        visited.add(currentId);
+
+        const activity = activityById.get(currentId);
+        if (!activity) continue;
+
+        if (activity.totalFloat === null || activity.totalFloat >= floatThreshold) {
+          continue;
+        }
+
+        chain.push(activity);
+
+        const rels = relsByActivity.get(currentId);
+        if (rels) {
+          const nextIds = direction === 'forward' ? rels.succs : rels.preds;
+          for (const nextId of nextIds) {
+            if (!visited.has(nextId)) {
+              queue.push(nextId);
+            }
+          }
+        }
+      }
+
+      return chain;
+    };
+
+    for (const seedActivity of seedActivities) {
+      if (tracedPaths.has(seedActivity.id)) continue;
+
+      const backwardChain = traceChain(seedActivity.id, 'backward');
+      const forwardChain = traceChain(seedActivity.id, 'forward');
+
+      const fullChain = [...new Set([...backwardChain.reverse(), ...forwardChain])];
+      
+      if (fullChain.length < 2) continue;
+
+      const chainKey = fullChain.map(a => a.id).sort().join('-');
+      if (tracedPaths.has(chainKey)) continue;
+      tracedPaths.add(chainKey);
+
+      fullChain.forEach(a => tracedPaths.add(a.id));
+
+      const sortedChain = fullChain.sort((a, b) => {
+        if (!a.earlyStart || !b.earlyStart) return 0;
+        return a.earlyStart.localeCompare(b.earlyStart);
+      });
+
+      const isCritical = sortedChain.every(a => a.isCritical);
+      const pathType = isCritical ? "Critical" : "Near-Critical";
+      const avgFloat = sortedChain.reduce((sum, a) => sum + (a.totalFloat || 0), 0) / sortedChain.length;
+
+      let chunkText = `[${pathType} Logic Path - ${sortedChain.length} Activities]\n`;
+      chunkText += `Average Float: ${avgFloat.toFixed(1)} days\n`;
+      chunkText += `Path Span: ${sortedChain[0]?.earlyStart || 'N/A'} → ${sortedChain[sortedChain.length - 1]?.earlyFinish || 'N/A'}\n\n`;
+      chunkText += `Complete logical sequence:\n`;
+
+      for (let i = 0; i < sortedChain.length; i++) {
+        const act = sortedChain[i];
+        const rels = relsByActivity.get(act.id) || { preds: [], succs: [] };
+        
+        chunkText += `\n${i + 1}. ${act.activityId}: ${act.name}`;
+        chunkText += `\n   Duration: ${act.originalDuration || 0}d | Float: ${act.totalFloat}d`;
+        if (act.earlyStart) chunkText += `\n   ${act.earlyStart} → ${act.earlyFinish}`;
+        
+        if (i < sortedChain.length - 1) {
+          const nextAct = sortedChain[i + 1];
+          const relType = relationships.find(r => 
+            r.predecessorId === act.id && r.successorId === nextAct.id
+          );
+          chunkText += `\n   ↓ ${relType?.type || 'FS'}${relType?.lag ? ` +${relType.lag}d` : ''}`;
+        }
+      }
+
+      chunks.push({
+        entityType: "LogicPath",
+        entityId: `path-${sortedChain[0]?.activityId}-to-${sortedChain[sortedChain.length - 1]?.activityId}`,
+        chunkText,
+        metadata: {
+          pathType,
+          isCritical,
+          activityIds: sortedChain.map(a => a.id),
+          activityCount: sortedChain.length,
+          averageFloat: avgFloat,
+          startActivity: sortedChain[0]?.activityId,
+          endActivity: sortedChain[sortedChain.length - 1]?.activityId,
+          dateRange: {
+            start: sortedChain[0]?.earlyStart,
+            end: sortedChain[sortedChain.length - 1]?.earlyFinish
+          }
+        },
+        tokenCount: this.estimateTokens(chunkText)
+      });
     }
 
     return chunks;

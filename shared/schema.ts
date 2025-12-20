@@ -485,7 +485,9 @@ export const embeddingEntityTypeEnum = pgEnum("embedding_entity_type", [
   "CalendarBlock",
   "TiaScenario",
   "MeetingNotes",
-  "Relationship"
+  "Relationship",
+  "LogicPath",
+  "WbsPhase"
 ]);
 
 // Schedule embeddings table for RAG retrieval
