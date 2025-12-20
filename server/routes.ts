@@ -13,7 +13,7 @@ import {
 import { z } from "zod";
 import { generateScheduleWithAI, identifyScheduleImpacts } from "./scheduleAITools";
 import { poe, POE_MODELS, streamLLMWithReasoning, queryLLM } from "./poeClient";
-import { SYSTEM_ASSISTANT, ToolSchema } from "./assistantTools";
+import { generateSystemPrompt, ToolSchema } from "./assistantTools";
 import { registerScheduleRoutes } from "./scheduleRoutes";
 import { ObjectStorageService, replitStorageClient } from "./objectStorage";
 import { analyzeDocuments, type DocumentAnalysis, type ProcessingOptions } from "./documentAnalyzer";
@@ -2092,8 +2092,13 @@ Return ONLY the enhanced prompt text, nothing else.`;
         enrichedContextStr = `Context: ${JSON.stringify(context)}`;
       }
       
+      const dynamicSystemPrompt = generateSystemPrompt(query);
+      const { detectToolCategories } = await import("./assistantTools");
+      const detectedCategories = detectToolCategories(query);
+      console.log(`[AI] Dynamic prompt: detected categories [${detectedCategories.join(", ") || "General only"}]`);
+      
       const messages = [
-        { role: "system" as const, content: SYSTEM_ASSISTANT },
+        { role: "system" as const, content: dynamicSystemPrompt },
         { role: "user" as const, content: `${enrichedContextStr}\n\nProject ID: ${projectId}\n\nQuery: ${query}` }
       ];
 
