@@ -199,6 +199,7 @@ export interface IStorage {
   getUserLearnedRuleByKeywords(userId: string, triggerKeyword: string, targetKeyword: string): Promise<UserLearnedRule | undefined>;
   createUserLearnedRule(rule: InsertUserLearnedRule): Promise<UserLearnedRule>;
   updateUserLearnedRule(id: string, updates: Partial<UserLearnedRule>): Promise<UserLearnedRule | undefined>;
+  deleteUserLearnedRule(id: string): Promise<boolean>;
   
   // Vocabulary Aliases (Pattern Observer)
   getVocabularyAliases(userId: string): Promise<VocabularyAlias[]>;
@@ -1943,6 +1944,10 @@ export class MemStorage implements IStorage {
     };
     this.userLearnedRules.set(id, updated);
     return updated;
+  }
+
+  async deleteUserLearnedRule(id: string): Promise<boolean> {
+    return this.userLearnedRules.delete(id);
   }
 
   async getUserLearnedRuleByKeywords(userId: string, triggerKeyword: string, targetKeyword: string): Promise<UserLearnedRule | undefined> {

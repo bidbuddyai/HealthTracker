@@ -7,6 +7,12 @@ import {
   type DocumentAnalysis,
   type ProcessingOptions 
 } from "./documentAnalyzer";
+import { 
+  getTradeKnowledge, 
+  generatePromptEnrichment, 
+  applyConstraintsToActivities,
+  type TradeKnowledgeContext 
+} from "./tradeKnowledgeGraph";
 
 export interface ScheduleAIRequest {
   type: 'create' | 'update' | 'lookahead' | 'analyze';
@@ -17,6 +23,7 @@ export interface ScheduleAIRequest {
   constraints?: string[];
   uploadedFiles?: string[];
   model?: string;
+  userId?: string; // For trade knowledge injection
   documentProcessing?: {
     mode: 'quick' | 'standard' | 'deep' | 'custom';
     selectedSections?: string[]; // section IDs for custom mode
@@ -529,6 +536,34 @@ Provide:
   console.log(`Prompt Length: ${prompt.length} chars`);
   console.log(`===========================\n`);
   
+  // Trade Knowledge Graph injection for Direct Mode
+  let enrichedSystemPrompt = SCHEDULE_SYSTEM_PROMPT;
+  let tradeKnowledge: TradeKnowledgeContext | null = null;
+  
+  if (request.userId) {
+    try {
+      tradeKnowledge = await getTradeKnowledge(request.userId);
+      const enrichment = generatePromptEnrichment(tradeKnowledge);
+      
+      // Inject trade context before CPM requirements
+      const insertPoint = enrichedSystemPrompt.indexOf("**CPM NETWORK REQUIREMENTS:**");
+      if (insertPoint > 0) {
+        enrichedSystemPrompt = 
+          enrichedSystemPrompt.slice(0, insertPoint) +
+          enrichment.tradeContext +
+          enrichment.constraintInstructions +
+          "\n" +
+          enrichedSystemPrompt.slice(insertPoint);
+      } else {
+        enrichedSystemPrompt = enrichment.tradeContext + enrichment.constraintInstructions + "\n\n" + enrichedSystemPrompt;
+      }
+      
+      console.log(`[DirectMode] Enriched prompt with ${tradeKnowledge.constraintRules.length} rules for ${tradeKnowledge.trade} user`);
+    } catch (tradeError) {
+      console.warn("[DirectMode] Failed to get trade knowledge, using base prompt:", tradeError);
+    }
+  }
+  
   try {
     const aiModel = request.model || 'Claude-Sonnet-4';
     
@@ -541,7 +576,7 @@ Provide:
       response = await poe.chat.completions.create({
         model: aiModel,
         messages: [
-          { role: "system", content: SCHEDULE_SYSTEM_PROMPT },
+          { role: "system", content: enrichedSystemPrompt },
           { role: "user", content: prompt }
         ],
         temperature: 0.2,

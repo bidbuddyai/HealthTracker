@@ -1,172 +1,86 @@
 # Overview
 
-ScheduleSam is a sophisticated CPM (Critical Path Method) scheduling application comparable to industry standards like MS Project and Primavera P6. The system provides comprehensive project scheduling capabilities including advanced activity types, WBS hierarchy management, activity codes, custom fields, and AI-powered scheduling assistance. Now featuring enterprise-grade authentication via Replit Auth with full user management, session handling, and secure multi-user access control. The AI assistant can now manage work calendars, WBS structures, and Time Impact Analysis through natural language commands.
+ScheduleSam is a CPM (Critical Path Method) scheduling application offering comprehensive project scheduling capabilities. It includes advanced activity types, WBS hierarchy management, activity codes, custom fields, and AI-powered assistance. The system features enterprise-grade authentication via Replit Auth with full user management and secure multi-user access. Its AI assistant can manage work calendars, WBS structures, and perform Time Impact Analysis through natural language commands, aiming to be a direct competitor to industry leaders like MS Project and Primavera P6.
 
 # User Preferences
 
 Preferred communication style: Simple, everyday language.
 
-## Authentication & Security
-- **Replit Auth Integration**: Enterprise-grade OpenID Connect authentication with seamless single sign-on
-- **Session Management**: PostgreSQL-backed session storage with automatic refresh token handling
-- **User Profile Management**: Complete user profiles with avatars, names, and email addresses
-- **Secure Route Protection**: All API endpoints and application routes protected with authentication middleware
-- **Graceful Authentication Flow**: Automatic redirection to login for unauthenticated users with session preservation
-
-## Adaptive Learning & Onboarding
-- **Trade Selection Onboarding**: New users select their primary trade (Abatement/Demolition, General Contractor, MEP Subcontractor, or Custom/Hybrid)
-- **Brain Load System**: Copies industry-specific scheduling logic rules from trade templates to user's personal learned rules
-- **Trade Templates**: Pre-seeded templates for Abatement, Demolition, General Construction, and MEP with activity sequences and relationship logic
-- **User Learned Rules**: Personal rule storage with confidence scoring for AI-assisted scheduling suggestions
-- **Custom Hybrid Mode**: Users can select multiple trade categories to build a customized rule set
-
-## Pattern Observer (Self-Learning System)
-- **Sequence Extraction**: Analyzes schedule relationships to identify recurring activity sequences (e.g., "Containment" followed by "Abatement")
-- **Confidence Scoring**: Increments confidence scores when patterns are repeated 3+ times; rules with higher confidence are prioritized
-- **Logic Diffing**: Detects when users manually change activity order contrary to template rules, creating "User Preference" override rules
-- **Vocabulary Learning**: Learns user's preferred terminology (e.g., "Remediation" instead of "Abatement") and stores as synonyms
-- **Scope Detection**: Identifies required predecessors for specific project types (e.g., "Notify Air Quality Board" before "Start" on Abatement projects)
-- **Background Processing**: Runs asynchronously on every schedule save without blocking user operations
-
-## Interview Mode (Consultative Generation)
-- **State Machine Flow**: SCOPE_GATHERING → SEQUENCE_VERIFICATION → GENERATION states for guided schedule creation
-- **Trade-Aware Questions**: Dynamic question sets based on user's trade:
-  - Abatement/Demo: Building count, utility handling, containment type, hazmat types, regulatory notifications
-  - General Contractor: Project phasing, concrete self-perform, project type, critical trades, owner milestones
-  - MEP Subcontractor: Scope (mechanical/electrical/plumbing), new vs retrofit, coordination, prefabrication
-- **Conditional Logic**: Follow-up questions appear based on previous answers (e.g., phase count only shown if project is phased)
-- **Plan Summary**: Before generation, displays structured plan with phases, estimated activities, and human-readable summary
-- **Confirmation Step**: User reviews and approves plan before schedule generation begins
-
-## Advanced Scheduling Features
-- **Complete CPM Engine**: Full Critical Path Method calculations with forward/backward pass, float calculations, and constraint handling
-- **Advanced Activity Types**: Support for Milestones (zero duration), Level of Effort activities, Hammock activities (spanning), and WBS Summary rollups
-- **WBS Hierarchy Management**: Complete Work Breakdown Structure with parent/child relationships, indenting/outdenting, and hierarchical display
-- **Activity Codes & Custom Fields**: Comprehensive filtering and grouping system with custom activity codes and fields for advanced project organization
-- **Relationship Management**: Full support for FS, SS, FF, SF relationships with lag/lead times and constraint enforcement
-- **Visual Schedule Grid**: Enhanced activity grid with hierarchical WBS display, comprehensive filtering, search, and column visibility controls
-- **Constraint Handling**: Advanced constraint types (SNET, SNLT, FNET, FNLT, MSO, MFO) with violation detection and reporting
-- **Progress Tracking**: Comprehensive progress management with percent complete, actual dates, and remaining duration updates
-- **Baseline Management**: Multiple named baselines with snapshot capture, variance tracking, and color-coded schedule slippage visualization
-- **Time Impact Analysis (TIA)**: Enterprise-grade TIA system with delay modeling, fragnet insertion, what-if scenarios, schedule compression analysis, and recovery planning
-- **Work Calendars**: Complete calendar management system with workweek patterns, shifts, exceptions, and assignments to activities and resources
-- **Collaboration Tools**: Threaded comments on activities, file attachments via object storage, role-based access control (Owner, Scheduler, Manager, Viewer, Contributor)
-- **Audit Trail System**: Complete change tracking with timestamps, user attribution, and detailed change logs for all schedule modifications
-- **Version History**: Schedule versioning with auto-save capabilities, complete snapshot storage, and version restoration functionality
-
 # System Architecture
 
 ## Frontend Architecture
-- **Framework**: React 18 with TypeScript for type safety and modern development patterns
-- **Styling**: Tailwind CSS with MeetBud brand colors (orange and blue theme), using Shadcn/UI component library for consistent design system
-- **State Management**: TanStack Query for server state management and caching, React Hook Form with Zod validation for form handling
-- **Routing**: Wouter for lightweight client-side routing
-- **Build Tool**: Vite for fast development and optimized production builds
+- **Framework**: React 18 with TypeScript.
+- **Styling**: Tailwind CSS with MeetBud brand colors (orange and blue theme), utilizing Shadcn/UI for consistent design.
+- **State Management**: TanStack Query for server state and caching, React Hook Form with Zod for form handling.
+- **Routing**: Wouter for lightweight client-side routing.
+- **Build Tool**: Vite.
 
 ## Backend Architecture
-- **Runtime**: Node.js with Express.js server using TypeScript
-- **Data Storage**: In-memory storage (MemStorage) for development with PostgreSQL-ready infrastructure
-- **API Design**: RESTful API with Zod schema validation for request/response handling
-- **Authentication**: Replit OpenID Connect authentication with PostgreSQL session storage and JWT token management
-- **Security**: All routes protected with authentication middleware, automatic token refresh, and secure cookie handling
+- **Runtime**: Node.js with Express.js server using TypeScript.
+- **Data Storage**: In-memory storage for development, PostgreSQL-ready infrastructure.
+- **API Design**: RESTful API with Zod schema validation.
+- **Authentication**: Replit OpenID Connect with PostgreSQL session storage and JWT.
+- **Security**: All routes protected with authentication middleware.
 
 ## Database Design
-- **Schema**: Comprehensive Drizzle ORM schema with PostgreSQL including:
-  - **Authentication Tables**: Users and sessions for Replit Auth (mandatory tables)
-  - **Project Management**: Projects, activities, WBS, calendars, relationships
-  - **Time Impact Analysis**: TIA scenarios, fragnets, delays, and analysis results
-  - **Collaboration**: Comments, attachments, audit logs, project members
-  - **Scheduling**: Baselines, resource assignments, schedule versions
-- **Migration Strategy**: Drizzle Kit for database migrations with `npm run db:push`
-- **Current State**: PostgreSQL database active with authentication tables deployed
+- **Schema**: Drizzle ORM for PostgreSQL, including authentication, project management (projects, activities, WBS, calendars), TIA, collaboration, and scheduling tables.
+- **Migration Strategy**: Drizzle Kit for database migrations.
 
 ## AI Integration Architecture
-- **LLM Provider**: Poe's OpenAI-compatible API endpoint (https://api.poe.com/v1)
-- **Function Calling**: Comprehensive app-level implementation with 40+ scheduling tools
-- **Assistant Tools**: Full scheduler operations including:
-  - **Calendar Management**: createCalendar, updateCalendar, deleteCalendar, addCalendarException, assignCalendar, createShift
-  - **WBS Operations**: createWbs, updateWbs, deleteWbs, moveWbs, assignActivityToWbs, calculateWbsRollups, exportWbs
-  - **TIA Analysis**: createTiaScenario, addTiaFragnet, addTiaDelay, runTiaAnalysis, getTiaResult, compareTiaScenarios, generateTiaReport
-  - **Activity Management**: createActivity, updateActivity, linkActivities, assignResources, updateProgress
-  - **Meeting Operations**: insertActionItems, createRFI, updateAgendaDiscussion, distributeMinutes, summarizeMeeting
-- **Model Support**: Multiple models including gemini-2.5-pro, Claude-Sonnet-4, Grok-4, Llama-3.1-405B
-- **Streaming**: OpenAI-compatible streaming responses for real-time interactions
-- **Natural Language Processing**: AI can understand and execute complex scheduling commands like "Create a 5-day work calendar with US holidays" or "Analyze 10-day delay impact on concrete pour"
+- **LLM Provider**: Poe's OpenAI-compatible API endpoint.
+- **Function Calling**: Over 40 scheduling tools implemented, covering calendar management, WBS operations, TIA analysis, and activity management.
+- **Model Support**: Multiple models including gemini-2.5-pro, Claude-Sonnet-4, Grok-4, Llama-3.1-405B.
+- **Streaming**: OpenAI-compatible streaming responses.
+- **Natural Language Processing**: AI understands complex scheduling commands.
 
 ## RAG (Retrieval-Augmented Generation) Architecture
-- **Vector Database**: PostgreSQL with pgvector extension for semantic search
-- **Embeddings**: OpenAI text-embedding-3-small (1536 dimensions) for vectorizing schedule data
-- **Chunking Strategy**: Intelligent chunking of schedule data into logical units:
-  - Activity Clusters: Groups of 10-12 related activities with relationships
-  - WBS Sections: Work breakdown structure nodes with summaries
-  - Critical Path Segments: Critical path activities in sequence
-  - Calendar Blocks: Calendar definitions with exceptions
-  - TIA Scenarios: Time impact analysis summaries
-- **Retrieval Flow**: On AI queries, semantic search retrieves top 5 most relevant chunks
-- **Context Enrichment**: Retrieved chunks are summarized by Poe before being included in AI prompts
-- **Token Savings**: Estimated 40-60% reduction in tokens per AI conversation
-- **API Endpoints**:
-  - GET /api/projects/:projectId/rag/status - Check embedding status
-  - POST /api/projects/:projectId/rag/generate - Trigger embedding generation
-- **Environment Variables**: Requires OPENAI_API_KEY secret for embeddings
+- **Vector Database**: PostgreSQL with pgvector extension.
+- **Embeddings**: OpenAI text-embedding-3-small for vectorizing schedule data.
+- **Chunking Strategy**: Intelligent chunking of schedule data (activity clusters, WBS sections, critical path segments, calendar blocks, TIA scenarios).
+- **Retrieval Flow**: Semantic search retrieves top 5 relevant chunks for AI context.
+- **Context Enrichment**: Retrieved chunks are summarized by Poe before AI prompts.
 
 ## Time Impact Analysis Architecture
-- **TIA Calculation Engine**: Advanced schedule impact calculator with fragnet insertion, delay modeling, and float consumption analysis
-- **Scenario Management**: Support for multiple TIA scenario types (delay analysis, acceleration, what-if, recovery planning)
-- **Impact Types**: EOT claims, disruption analysis, change order impacts, weather delays
-- **Analysis Features**: Critical path changes, float erosion tracking, milestone impact assessment, schedule compression opportunities
-- **Recovery Planning**: Pace analysis, fast-tracking opportunities, crashing options, shift work recommendations
+- **TIA Calculation Engine**: Advanced engine for fragnet insertion, delay modeling, and float consumption.
+- **Scenario Management**: Supports multiple TIA scenario types (delay analysis, acceleration, what-if, recovery planning).
+- **Analysis Features**: Tracks critical path changes, float erosion, and milestone impact.
 
 ## Meeting Workflow Architecture
-- **Sequential Meetings**: Automatic meeting numbering and carry-forward logic for action items
-- **6-Topic Construction Agenda**: Standardized agenda structure tailored for construction projects:
-  1. Welcome & Introductions
-  2. Site Safety
-  3. Project Schedule
-  4. Ongoing Project Details
-  5. Open Discussion
-  6. Action Items & Next Steps
-- **Status Tracking**: Comprehensive status management for action items, safety incidents, and project milestones
-- **Export System**: JSON export capability with planned DOCX/PDF support
+- **Sequential Meetings**: Automatic numbering and carry-forward logic for action items.
+- **6-Topic Construction Agenda**: Standardized agenda structure.
+- **Status Tracking**: Comprehensive status management for action items and project milestones.
 
-## Data Flow Patterns
-- **Client-Server**: Standard REST API communication with JSON payloads
-- **Real-time Features**: Foundation for live collaboration (WebSocket integration planned)
-- **Validation**: Dual validation with Zod schemas on both client and server
-- **Caching**: TanStack Query provides client-side caching and background updates
+## System Features
+- **Authentication & Security**: Enterprise-grade OpenID Connect via Replit Auth, PostgreSQL-backed session management, user profiles, secure route protection.
+- **Adaptive Learning & Onboarding**: Trade selection onboarding, "Brain Load System" for industry-specific scheduling logic, "Pattern Observer" for self-learning activity sequences and user preferences, "Vocabulary Learning" for custom terminology.
+- **Interview Mode**: Consultative generation through a state machine flow (SCOPE_GATHERING → SEQUENCE_VERIFICATION → GENERATION) with trade-aware questions and conditional logic.
+- **Direct Mode & Training Commands**: Context injection using a "Trade Knowledge Graph," constraint enforcement, and a `/train` command for explicit natural language instruction to create high-confidence user preference rules.
+- **Advanced Scheduling Features**: Complete CPM engine, support for Milestones, Level of Effort, Hammock, and WBS Summary activities, comprehensive WBS management, activity codes, custom fields, FS, SS, FF, SF relationships with lag/lead, visual schedule grid, constraint handling, progress tracking, baseline management, Time Impact Analysis (TIA), work calendars, collaboration tools (comments, attachments, role-based access), audit trail, and version history.
 
 # External Dependencies
 
 ## Core Infrastructure
-- **Poe API**: Primary LLM service requiring POE_API_KEY environment variable
-- **PostgreSQL**: Target database (currently using Neon serverless for deployment)
-- **Google Cloud Storage**: File storage integration for meeting attachments and audio files
+- **Poe API**: Primary LLM service (requires POE_API_KEY).
+- **PostgreSQL**: Target database, currently using Neon serverless.
+- **Google Cloud Storage**: File storage for attachments.
 
 ## Development & Build Tools
-- **Vite**: Frontend build tool and development server
-- **Replit**: Development environment with specific plugins for error handling and cartographer
-- **Uppy**: File upload components for handling meeting attachments
+- **Vite**: Frontend build tool.
+- **Replit**: Development environment.
 
 ## UI & Styling
-- **Radix UI**: Headless component primitives for accessibility
-- **Tailwind CSS**: Utility-first CSS framework
-- **Lucide Icons**: Icon library for consistent UI elements
+- **Radix UI**: Headless component primitives.
+- **Tailwind CSS**: Utility-first CSS framework.
+- **Lucide Icons**: Icon library.
 
 ## Form & Validation
-- **React Hook Form**: Form state management and validation
-- **Zod**: Schema validation library used across client and server
+- **React Hook Form**: Form state management.
+- **Zod**: Schema validation.
 
 ## Data Management
-- **TanStack Query**: Server state management and caching
-- **Drizzle ORM**: Type-safe database toolkit and query builder
-- **Drizzle Kit**: Database migration and introspection tools
-
-## Authentication & Security
-- **Environment Variables**: POE_API_KEY and DATABASE_URL management
-- **CORS Configuration**: Express.js CORS setup for API security
+- **TanStack Query**: Server state management.
+- **Drizzle ORM**: Type-safe database toolkit.
 
 ## File Processing
-- **Uppy Ecosystem**: File upload handling with AWS S3 integration, drag-drop interface, and progress tracking
-- **Object Storage Integration**: Direct file uploads to Replit object storage with presigned URLs
-- **Schedule File Processing**: AI-powered extraction of activities from CPM schedules and lookaheads
-- **Meeting File Analysis**: Automatic extraction of action items from uploaded meeting documents
+- **Uppy Ecosystem**: File upload handling, including direct uploads to Replit object storage.
+- **Object Storage Integration**: Presigned URLs for file uploads.

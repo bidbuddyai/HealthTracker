@@ -30,6 +30,10 @@ import {
   deleteSession,
   type InterviewAnswer
 } from "./interviewStateMachine";
+import { 
+  parseTrainCommand, 
+  saveTrainedRule 
+} from "./tradeKnowledgeGraph";
 
 // Project authorization helper
 async function hasProjectAccess(userId: string, projectId: string): Promise<boolean> {
@@ -2380,6 +2384,108 @@ Return ONLY the enhanced prompt text, nothing else.`;
     } catch (error) {
       console.error("Error deleting interview session:", error);
       res.status(500).json({ error: "Failed to delete interview session" });
+    }
+  });
+
+  // Training Command - Explicit rule teaching via natural language
+  app.post("/api/ai/train", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { command } = req.body;
+      
+      if (!command || typeof command !== "string") {
+        return res.status(400).json({ 
+          success: false, 
+          error: "Please provide a training command. Example: '/train When I do demolition, I always need a 10-day notification period before starting.'" 
+        });
+      }
+      
+      // Parse the training command
+      const parseResult = parseTrainCommand(command);
+      
+      if (!parseResult.success) {
+        return res.status(400).json({
+          success: false,
+          error: parseResult.error
+        });
+      }
+      
+      // Save the rule to storage
+      const saveResult = await saveTrainedRule(userId, parseResult.rule);
+      
+      if (!saveResult.success) {
+        return res.status(500).json({
+          success: false,
+          error: saveResult.error || "Failed to save the training rule"
+        });
+      }
+      
+      res.json({
+        success: true,
+        message: parseResult.message,
+        rule: parseResult.rule,
+        ruleId: saveResult.ruleId
+      });
+    } catch (error) {
+      console.error("Error processing train command:", error);
+      res.status(500).json({ error: "Failed to process training command" });
+    }
+  });
+
+  // Get user's trained rules
+  app.get("/api/ai/train/rules", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const rules = await storage.getUserLearnedRules(userId);
+      
+      // Filter to show only user-trained rules (high confidence, user preference)
+      const trainedRules = rules.filter(r => 
+        r.isUserPreference === true || 
+        (r.confidenceScore && r.confidenceScore >= 90)
+      );
+      
+      res.json({
+        success: true,
+        rules: trainedRules.map(r => ({
+          id: r.id,
+          trigger: r.triggerKeyword,
+          target: r.targetKeyword,
+          type: r.ruleType,
+          confidence: r.confidenceScore,
+          source: r.sourceType,
+          isActive: r.isActive,
+          createdAt: r.createdAt
+        }))
+      });
+    } catch (error) {
+      console.error("Error getting trained rules:", error);
+      res.status(500).json({ error: "Failed to get trained rules" });
+    }
+  });
+
+  // Delete a trained rule
+  app.delete("/api/ai/train/rules/:ruleId", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      const { ruleId } = req.params;
+      
+      // Verify the rule belongs to this user
+      const rules = await storage.getUserLearnedRules(userId);
+      const rule = rules.find(r => r.id === ruleId);
+      
+      if (!rule) {
+        return res.status(404).json({ error: "Rule not found" });
+      }
+      
+      if (rule.userId !== userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      
+      await storage.deleteUserLearnedRule(ruleId);
+      res.json({ success: true, message: "Rule deleted successfully" });
+    } catch (error) {
+      console.error("Error deleting trained rule:", error);
+      res.status(500).json({ error: "Failed to delete rule" });
     }
   });
 
