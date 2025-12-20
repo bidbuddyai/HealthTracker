@@ -15,14 +15,15 @@ import type {
   AuditLog, InsertAuditLog, ProjectMember, InsertProjectMember,
   ScheduleVersion, InsertScheduleVersion,
   User, UpsertUser,
-  TradeTemplate, InsertTradeTemplate, UserLearnedRule, InsertUserLearnedRule
+  TradeTemplate, InsertTradeTemplate, UserLearnedRule, InsertUserLearnedRule,
+  VocabularyAlias, InsertVocabularyAlias
 } from "@shared/schema";
 import {
   users, projects, wbs, activities, relationships, calendars,
   resources, resourceAssignments, baselines, baselineActivities, tiaScenarios, tiaFragnets,
   tiaDelays, tiaResults, scheduleUpdates, importExportHistory,
   aiContext, aiConversations, aiMessages, activityCodes, activityComments, attachments,
-  auditLogs, projectMembers, scheduleVersions, tradeTemplates, userLearnedRules
+  auditLogs, projectMembers, scheduleVersions, tradeTemplates, userLearnedRules, vocabularyAliases
 } from "@shared/schema";
 
 export class DbStorage implements IStorage {
@@ -1513,6 +1514,85 @@ export class DbStorage implements IStorage {
       return result[0];
     } catch (error) {
       console.error("Error updating user learned rule:", error);
+      return undefined;
+    }
+  }
+
+  async getUserLearnedRuleByKeywords(userId: string, triggerKeyword: string, targetKeyword: string): Promise<UserLearnedRule | undefined> {
+    try {
+      const result = await db
+        .select()
+        .from(userLearnedRules)
+        .where(and(
+          eq(userLearnedRules.userId, userId),
+          sql`LOWER(${userLearnedRules.triggerKeyword}) = ${triggerKeyword.toLowerCase()}`,
+          sql`LOWER(${userLearnedRules.targetKeyword}) = ${targetKeyword.toLowerCase()}`,
+          eq(userLearnedRules.isActive, true)
+        ))
+        .limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting user learned rule by keywords:", error);
+      return undefined;
+    }
+  }
+
+  // Vocabulary Aliases (Pattern Observer)
+  async getVocabularyAliases(userId: string): Promise<VocabularyAlias[]> {
+    try {
+      return await db
+        .select()
+        .from(vocabularyAliases)
+        .where(and(
+          eq(vocabularyAliases.userId, userId),
+          eq(vocabularyAliases.isActive, true)
+        ))
+        .orderBy(sql`${vocabularyAliases.occurrenceCount} DESC`);
+    } catch (error) {
+      console.error("Error getting vocabulary aliases:", error);
+      return [];
+    }
+  }
+
+  async getVocabularyAlias(userId: string, canonicalTerm: string, aliasTerm: string): Promise<VocabularyAlias | undefined> {
+    try {
+      const result = await db
+        .select()
+        .from(vocabularyAliases)
+        .where(and(
+          eq(vocabularyAliases.userId, userId),
+          sql`LOWER(${vocabularyAliases.canonicalTerm}) = ${canonicalTerm.toLowerCase()}`,
+          sql`LOWER(${vocabularyAliases.aliasTerm}) = ${aliasTerm.toLowerCase()}`,
+          eq(vocabularyAliases.isActive, true)
+        ))
+        .limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting vocabulary alias:", error);
+      return undefined;
+    }
+  }
+
+  async createVocabularyAlias(insertAlias: InsertVocabularyAlias): Promise<VocabularyAlias> {
+    try {
+      const result = await db.insert(vocabularyAliases).values(insertAlias).returning();
+      return result[0];
+    } catch (error) {
+      console.error("Error creating vocabulary alias:", error);
+      throw error;
+    }
+  }
+
+  async updateVocabularyAlias(id: string, updates: Partial<VocabularyAlias>): Promise<VocabularyAlias | undefined> {
+    try {
+      const result = await db
+        .update(vocabularyAliases)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(vocabularyAliases.id, id))
+        .returning();
+      return result[0];
+    } catch (error) {
+      console.error("Error updating vocabulary alias:", error);
       return undefined;
     }
   }

@@ -634,6 +634,8 @@ export const tradeTemplates = pgTable("trade_templates", {
   updatedAt: timestamp("updated_at").defaultNow().notNull()
 });
 
+export const ruleSourceEnum = pgEnum("rule_source", ["template", "observed", "user_preference"]);
+
 export const userLearnedRules = pgTable("user_learned_rules", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").references(() => users.id).notNull(),
@@ -644,17 +646,35 @@ export const userLearnedRules = pgTable("user_learned_rules", {
   occurrenceCount: integer("occurrence_count").default(1),
   lastApplied: timestamp("last_applied"),
   isActive: boolean("is_active").default(true),
+  isUserPreference: boolean("is_user_preference").default(false), // Marks user override rules
+  sourceType: ruleSourceEnum("source_type").default("template"), // Where the rule came from
+  projectScope: varchar("project_scope"), // e.g., "Abatement" - scope detection for specific project types
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull()
+});
+
+// Vocabulary aliases for synonym learning
+export const vocabularyAliases = pgTable("vocabulary_aliases", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  canonicalTerm: varchar("canonical_term").notNull(), // Original term (e.g., "Abatement")
+  aliasTerm: varchar("alias_term").notNull(), // User's preferred term (e.g., "Remediation")
+  occurrenceCount: integer("occurrence_count").default(1),
+  isActive: boolean("is_active").default(true),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull()
 });
 
 export const insertTradeTemplateSchema = createInsertSchema(tradeTemplates).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertUserLearnedRuleSchema = createInsertSchema(userLearnedRules).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertVocabularyAliasSchema = createInsertSchema(vocabularyAliases).omit({ id: true, createdAt: true, updatedAt: true });
 
 export type TradeTemplate = typeof tradeTemplates.$inferSelect;
 export type InsertTradeTemplate = z.infer<typeof insertTradeTemplateSchema>;
 export type UserLearnedRule = typeof userLearnedRules.$inferSelect;
 export type InsertUserLearnedRule = z.infer<typeof insertUserLearnedRuleSchema>;
+export type VocabularyAlias = typeof vocabularyAliases.$inferSelect;
+export type InsertVocabularyAlias = z.infer<typeof insertVocabularyAliasSchema>;
 
 // Export-specific types for schedule export functionality
 export interface ProjectSchedule {

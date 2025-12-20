@@ -20,6 +20,14 @@ Preferred communication style: Simple, everyday language.
 - **User Learned Rules**: Personal rule storage with confidence scoring for AI-assisted scheduling suggestions
 - **Custom Hybrid Mode**: Users can select multiple trade categories to build a customized rule set
 
+## Pattern Observer (Self-Learning System)
+- **Sequence Extraction**: Analyzes schedule relationships to identify recurring activity sequences (e.g., "Containment" followed by "Abatement")
+- **Confidence Scoring**: Increments confidence scores when patterns are repeated 3+ times; rules with higher confidence are prioritized
+- **Logic Diffing**: Detects when users manually change activity order contrary to template rules, creating "User Preference" override rules
+- **Vocabulary Learning**: Learns user's preferred terminology (e.g., "Remediation" instead of "Abatement") and stores as synonyms
+- **Scope Detection**: Identifies required predecessors for specific project types (e.g., "Notify Air Quality Board" before "Start" on Abatement projects)
+- **Background Processing**: Runs asynchronously on every schedule save without blocking user operations
+
 ## Advanced Scheduling Features
 - **Complete CPM Engine**: Full Critical Path Method calculations with forward/backward pass, float calculations, and constraint handling
 - **Advanced Activity Types**: Support for Milestones (zero duration), Level of Effort activities, Hammock activities (spanning), and WBS Summary rollups

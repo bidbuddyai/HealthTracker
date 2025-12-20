@@ -19,6 +19,7 @@ import { registerScheduleRoutes } from "./scheduleRoutes";
 import { ObjectStorageService, replitStorageClient } from "./objectStorage";
 import { analyzeDocuments, type DocumentAnalysis, type ProcessingOptions } from "./documentAnalyzer";
 import { ragService } from "./ragService";
+import { observeScheduleSave } from "./patternObserver";
 
 // Project authorization helper
 async function hasProjectAccess(userId: string, projectId: string): Promise<boolean> {
@@ -651,7 +652,17 @@ ${generateXml(wbsTree, 2)}
   app.post("/api/projects/:projectId/activities/bulk-update", isAuthenticated, async (req, res) => {
     try {
       const { updates } = req.body;
+      const projectId = req.params.projectId;
       await storage.bulkUpdateActivities(updates);
+      
+      // Trigger Pattern Observer to learn from this schedule update
+      const userId = req.user?.claims?.sub;
+      if (userId && updates.length > 0) {
+        observeScheduleSave(userId, projectId).catch(err => 
+          console.error("[PatternObserver] Background learning failed:", err)
+        );
+      }
+      
       res.json({ success: true });
     } catch (error) {
       console.error("Error bulk updating activities:", error);
@@ -693,6 +704,15 @@ ${generateXml(wbsTree, 2)}
       }
       
       console.log(`Successfully saved ${savedCount} of ${activities.length} activities`);
+      
+      // Trigger Pattern Observer to learn from this schedule save
+      const userId = req.user?.claims?.sub;
+      if (userId && savedCount > 0) {
+        observeScheduleSave(userId, projectId).catch(err => 
+          console.error("[PatternObserver] Background learning failed:", err)
+        );
+      }
+      
       res.json({ 
         success: true, 
         activitiesCount: savedCount,
@@ -726,13 +746,23 @@ ${generateXml(wbsTree, 2)}
     }
   });
 
-  app.post("/api/projects/:projectId/relationships", async (req, res) => {
+  app.post("/api/projects/:projectId/relationships", isAuthenticated, async (req, res) => {
     try {
+      const projectId = req.params.projectId;
       const relationshipData = insertRelationshipSchema.parse({
         ...req.body,
-        projectId: req.params.projectId
+        projectId
       });
       const relationship = await storage.createRelationship(relationshipData);
+      
+      // Trigger Pattern Observer to learn from relationship creation
+      const userId = req.user?.claims?.sub;
+      if (userId) {
+        observeScheduleSave(userId, projectId).catch(err => 
+          console.error("[PatternObserver] Background learning failed:", err)
+        );
+      }
+      
       res.json(relationship);
     } catch (error) {
       console.error("Error creating relationship:", error);

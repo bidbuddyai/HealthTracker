@@ -15,7 +15,8 @@ import type {
   AuditLog, InsertAuditLog, ProjectMember, InsertProjectMember,
   ScheduleVersion, InsertScheduleVersion,
   User, UpsertUser,
-  TradeTemplate, InsertTradeTemplate, UserLearnedRule, InsertUserLearnedRule
+  TradeTemplate, InsertTradeTemplate, UserLearnedRule, InsertUserLearnedRule,
+  VocabularyAlias, InsertVocabularyAlias
 } from "@shared/schema";
 
 export interface IStorage {
@@ -195,8 +196,15 @@ export interface IStorage {
   
   // User Learned Rules
   getUserLearnedRules(userId: string): Promise<UserLearnedRule[]>;
+  getUserLearnedRuleByKeywords(userId: string, triggerKeyword: string, targetKeyword: string): Promise<UserLearnedRule | undefined>;
   createUserLearnedRule(rule: InsertUserLearnedRule): Promise<UserLearnedRule>;
   updateUserLearnedRule(id: string, updates: Partial<UserLearnedRule>): Promise<UserLearnedRule | undefined>;
+  
+  // Vocabulary Aliases (Pattern Observer)
+  getVocabularyAliases(userId: string): Promise<VocabularyAlias[]>;
+  getVocabularyAlias(userId: string, canonicalTerm: string, aliasTerm: string): Promise<VocabularyAlias | undefined>;
+  createVocabularyAlias(alias: InsertVocabularyAlias): Promise<VocabularyAlias>;
+  updateVocabularyAlias(id: string, updates: Partial<VocabularyAlias>): Promise<VocabularyAlias | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -230,6 +238,7 @@ export class MemStorage implements IStorage {
   private users = new Map<string, User>();
   private tradeTemplates = new Map<string, TradeTemplate>();
   private userLearnedRules = new Map<string, UserLearnedRule>();
+  private vocabularyAliases = new Map<string, VocabularyAlias>();
 
   constructor() {
     this.seedData();
@@ -1933,6 +1942,60 @@ export class MemStorage implements IStorage {
       updatedAt: new Date()
     };
     this.userLearnedRules.set(id, updated);
+    return updated;
+  }
+
+  async getUserLearnedRuleByKeywords(userId: string, triggerKeyword: string, targetKeyword: string): Promise<UserLearnedRule | undefined> {
+    return Array.from(this.userLearnedRules.values())
+      .find(r => 
+        r.userId === userId && 
+        r.triggerKeyword.toLowerCase() === triggerKeyword.toLowerCase() && 
+        r.targetKeyword.toLowerCase() === targetKeyword.toLowerCase() &&
+        r.isActive
+      );
+  }
+
+  // Vocabulary Aliases
+  async getVocabularyAliases(userId: string): Promise<VocabularyAlias[]> {
+    return Array.from(this.vocabularyAliases.values())
+      .filter(a => a.userId === userId && a.isActive)
+      .sort((a, b) => (b.occurrenceCount ?? 0) - (a.occurrenceCount ?? 0));
+  }
+
+  async getVocabularyAlias(userId: string, canonicalTerm: string, aliasTerm: string): Promise<VocabularyAlias | undefined> {
+    return Array.from(this.vocabularyAliases.values())
+      .find(a => 
+        a.userId === userId && 
+        a.canonicalTerm.toLowerCase() === canonicalTerm.toLowerCase() && 
+        a.aliasTerm.toLowerCase() === aliasTerm.toLowerCase() &&
+        a.isActive
+      );
+  }
+
+  async createVocabularyAlias(alias: InsertVocabularyAlias): Promise<VocabularyAlias> {
+    const id = randomUUID();
+    const newAlias: VocabularyAlias = {
+      ...alias,
+      id,
+      occurrenceCount: alias.occurrenceCount ?? 1,
+      isActive: alias.isActive ?? true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.vocabularyAliases.set(id, newAlias);
+    return newAlias;
+  }
+
+  async updateVocabularyAlias(id: string, updates: Partial<VocabularyAlias>): Promise<VocabularyAlias | undefined> {
+    const alias = this.vocabularyAliases.get(id);
+    if (!alias) return undefined;
+    
+    const updated: VocabularyAlias = {
+      ...alias,
+      ...updates,
+      updatedAt: new Date()
+    };
+    this.vocabularyAliases.set(id, updated);
     return updated;
   }
 }
