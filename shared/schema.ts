@@ -206,6 +206,11 @@ export const activities = pgTable("activities", {
   responsibility: text("responsibility"),
   location: text("location"),
   
+  // External system references for round-trip fidelity
+  externalUid: integer("external_uid"), // Original UID from MS Project for round-trip preservation
+  externalGuid: text("external_guid"), // Original GUID from MS Project
+  wbsCode: text("wbs_code"), // Explicit WBS code (don't let MS Project auto-calculate)
+  
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull()
 }, (table) => ({

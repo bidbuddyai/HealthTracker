@@ -485,15 +485,33 @@ export class MSProjectXMLExporter {
   }
   
   private formatDateForMSP(dateStr: string, time: string = '08:00:00'): string {
-    // MS Project expects dates in ISO 8601 format with timezone
-    // Format: YYYY-MM-DDTHH:MM:SS
-    const date = new Date(`${dateStr}T${time}`);
-    if (isNaN(date.getTime())) {
-      // Fallback to simple concatenation if date parsing fails
+    // MS Project expects dates in strict ISO 8601 format
+    // Format: YYYY-MM-DDTHH:MM:SS (no timezone to prevent drift)
+    // This ensures tasks don't shift from 8 AM to 5 PM due to timezone conversion
+    
+    if (!dateStr) {
+      const now = new Date();
+      return `${now.toISOString().split('T')[0]}T${time}`;
+    }
+    
+    // Parse just the date part to avoid timezone issues
+    const datePart = dateStr.split('T')[0];
+    const dateMatch = datePart.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    
+    if (!dateMatch) {
+      // Try to parse and reformat
+      const date = new Date(dateStr);
+      if (!isNaN(date.getTime())) {
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}T${time}`;
+      }
       return `${dateStr}T${time}`;
     }
-    // Return ISO format without milliseconds
-    return date.toISOString().split('.')[0];
+    
+    // Return strict ISO 8601 format without timezone (prevents drift)
+    return `${datePart}T${time}`;
   }
   
   /**
@@ -815,9 +833,33 @@ export class MSProjectXMLExporter {
     xml += '      <ManualDuration>' + summaryDurationFormat + '</ManualDuration>\n';
     xml += '    </Task>\n';
     
+    // Build UID map for round-trip fidelity - preserve original UIDs where available
+    const uidMap = new Map<string, number>();
+    let nextAutoUid = 2; // Start from 2 since summary task is UID 1
+    
+    // First pass: assign UIDs preserving originals
+    validatedActivities.forEach((act) => {
+      const anyAct = act as any;
+      if (anyAct.externalUid && typeof anyAct.externalUid === 'number') {
+        uidMap.set(act.activityId, anyAct.externalUid);
+        if (anyAct.externalUid >= nextAutoUid) {
+          nextAutoUid = anyAct.externalUid + 1;
+        }
+      }
+    });
+    
+    // Second pass: assign new UIDs to activities without preserved ones
+    validatedActivities.forEach((act) => {
+      if (!uidMap.has(act.activityId)) {
+        uidMap.set(act.activityId, nextAutoUid);
+        nextAutoUid++;
+      }
+    });
+    
     // Individual activity tasks using validated dependencies
     validatedActivities.forEach((act, index) => {
-      const uid = index + 2; // Start from UID 2 since summary task is UID 1
+      const uid = uidMap.get(act.activityId) || (index + 2);
+      const anyAct = act as any;
       const durationDays = act.originalDuration || 0; // Use 0 for undefined duration
       const isMilestone = durationDays === 0;
       const durationHours = isMilestone ? 0 : (durationDays * 8); // 0 hours for milestones, 8 hours per working day for tasks
@@ -832,7 +874,12 @@ export class MSProjectXMLExporter {
       
       const remainingDuration = act.remainingDuration || durationDays;
       const percentComplete = this.getPercentComplete(act.status || 'Not Started');
-      const taskGUID = this.generateGUID();
+      
+      // Preserve original GUID if available, otherwise generate new one
+      const taskGUID = anyAct.externalGuid || this.generateGUID();
+      
+      // Use explicit WBS code if available, otherwise use activity ID
+      const wbsCode = anyAct.wbsCode || act.activityId || uid.toString();
       
       xml += '    <Task>\n';
       xml += '      <UID>' + uid + '</UID>\n';
@@ -842,7 +889,8 @@ export class MSProjectXMLExporter {
       xml += '      <Type>0</Type>\n';
       xml += '      <IsNull>0</IsNull>\n';
       xml += '      <CreateDate>' + new Date().toISOString() + '</CreateDate>\n';
-      xml += '      <WBS>' + (act.activityId || uid.toString()) + '</WBS>\n';
+      // Use explicit WBS code to prevent MS Project from auto-calculating
+      xml += '      <WBS>' + this.escapeXml(wbsCode) + '</WBS>\n';
       xml += '      <OutlineNumber>' + uid + '</OutlineNumber>\n';
       xml += '      <OutlineLevel>1</OutlineLevel>\n';
       xml += '      <Priority>500</Priority>\n';
@@ -925,14 +973,16 @@ export class MSProjectXMLExporter {
       }
       
       // Add validated predecessor links (circular dependencies have been removed)
+      // Use UID map for proper round-trip fidelity
       if (act.predecessors && act.predecessors.trim()) {
         const predList = act.predecessors.split(',').filter(p => p.trim());
         
         predList.forEach(pred => {
-          const predIndex = validatedActivities.findIndex(a => a.activityId === pred.trim());
-          if (predIndex >= 0 && predIndex !== index) { // Prevent self-reference
+          const predActId = pred.trim();
+          const predUid = uidMap.get(predActId);
+          if (predUid && predActId !== act.activityId) { // Prevent self-reference
             xml += '      <PredecessorLink>\n';
-            xml += '        <PredecessorUID>' + (predIndex + 2) + '</PredecessorUID>\n'; // +2 because activities start from UID 2
+            xml += '        <PredecessorUID>' + predUid + '</PredecessorUID>\n';
             xml += '        <Type>1</Type>\n'; // 1 = Finish-to-Start
             xml += '        <CrossProject>0</CrossProject>\n';
             xml += '        <LinkLag>0</LinkLag>\n';

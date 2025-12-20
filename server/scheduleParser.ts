@@ -175,6 +175,11 @@ export class MSProjectXMLParser {
         return;
       }
       
+      // Extract original MS Project UID and GUID for round-trip preservation
+      const originalUid = parseInt(taskId) || undefined;
+      const originalGuid = this.extractXmlValue(taskXml, 'GUID') || undefined;
+      const notes = this.extractXmlValue(taskXml, 'Notes') || undefined;
+      
       const activity: Activity = {
         id: crypto.randomUUID(),
         activityId: this.extractXmlValue(taskXml, 'ID') || `A${(index + 1).toString().padStart(3, '0')}`,
@@ -187,12 +192,17 @@ export class MSProjectXMLParser {
         startDate: this.formatMSPDate(this.extractXmlValue(taskXml, 'Start')),
         finishDate: this.formatMSPDate(this.extractXmlValue(taskXml, 'Finish')),
         wbs: wbs || '',
+        wbsCode: wbs || '', // Explicit WBS code preservation for MS Project
         resources: this.extractResourcesFromXml(taskXml),
         totalFloat: parseInt(this.extractXmlValue(taskXml, 'TotalSlack')) / 480 || 0, // Convert minutes to days
         isCritical: this.extractXmlValue(taskXml, 'Critical') === '1',
         constraintType: this.mapMSPConstraintType(this.extractXmlValue(taskXml, 'ConstraintType')),
-        constraintDate: this.formatMSPDate(this.extractXmlValue(taskXml, 'ConstraintDate'))
-      };
+        constraintDate: this.formatMSPDate(this.extractXmlValue(taskXml, 'ConstraintDate')),
+        // Round-trip fidelity fields
+        externalUid: originalUid,
+        externalGuid: originalGuid,
+        notes: notes
+      } as Activity;
       
       activities.push(activity);
       if (taskId) {
