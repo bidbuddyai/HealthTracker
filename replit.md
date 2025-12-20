@@ -52,7 +52,7 @@ Preferred communication style: Simple, everyday language.
 
 ## System Features
 - **Authentication & Security**: Enterprise-grade OpenID Connect via Replit Auth, PostgreSQL-backed session management, user profiles, secure route protection.
-- **Adaptive Learning & Onboarding**: Trade selection onboarding, "Brain Load System" for industry-specific scheduling logic, "Pattern Observer" for self-learning activity sequences and user preferences, "Vocabulary Learning" for custom terminology.
+- **Adaptive Learning & Onboarding**: Trade selection onboarding, "Brain Load System" for industry-specific scheduling logic, "Pattern Observer" for self-learning activity sequences and user preferences, "Vocabulary Learning" for custom terminology, "Import Style Analysis" that extracts scheduling style (WBS depth, constraint usage, lag preferences, relationship types) from imported files.
 - **Interview Mode**: Consultative generation through a state machine flow (SCOPE_GATHERING → SEQUENCE_VERIFICATION → GENERATION) with trade-aware questions and conditional logic.
 - **Direct Mode & Training Commands**: Context injection using a "Trade Knowledge Graph," constraint enforcement, and a `/train` command for explicit natural language instruction to create high-confidence user preference rules.
 - **Advanced Scheduling Features**: Complete CPM engine, support for Milestones, Level of Effort, Hammock, and WBS Summary activities, comprehensive WBS management, activity codes, custom fields, FS, SS, FF, SF relationships with lag/lead, visual schedule grid, constraint handling, progress tracking, baseline management, Time Impact Analysis (TIA), work calendars, collaboration tools (comments, attachments, role-based access), audit trail, and version history.

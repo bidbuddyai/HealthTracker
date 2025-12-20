@@ -441,3 +441,330 @@ export async function observeScheduleSave(userId: string, projectId: string): Pr
     console.error("[PatternObserver] Error during schedule observation:", error);
   }
 }
+
+export interface ImportStyleMetrics {
+  wbsAverageDepth: number;
+  wbsMaxDepth: number;
+  constraintUsage: {
+    mustStartOn: number;
+    startNoEarlierThan: number;
+    finishNoLaterThan: number;
+    mustFinishOn: number;
+    asLateAsPossible: number;
+    asSoonAsPossible: number;
+    total: number;
+  };
+  lagPreferences: {
+    fsWithLag: number;
+    fsWithoutLag: number;
+    ssCount: number;
+    ffCount: number;
+    sfCount: number;
+    averageLag: number;
+    usesNegativeLag: boolean;
+  };
+  activityDurationPatterns: {
+    averageDuration: number;
+    shortActivities: number;
+    mediumActivities: number;
+    longActivities: number;
+  };
+  relationshipDensity: number;
+  summaryText: string;
+}
+
+export async function analyzeImportedSchedule(
+  userId: string,
+  projectId: string,
+  parsedActivities: Array<{
+    activityId: string;
+    activityName: string;
+    duration: number;
+    predecessors: string[];
+    wbs?: string;
+    constraint?: string;
+    constraintDate?: string;
+    lag?: number;
+    relationshipType?: string;
+  }>
+): Promise<ImportStyleMetrics> {
+  console.log(`[PatternObserver] Analyzing imported schedule for user ${userId}, project ${projectId}`);
+  
+  const metrics: ImportStyleMetrics = {
+    wbsAverageDepth: 0,
+    wbsMaxDepth: 0,
+    constraintUsage: {
+      mustStartOn: 0,
+      startNoEarlierThan: 0,
+      finishNoLaterThan: 0,
+      mustFinishOn: 0,
+      asLateAsPossible: 0,
+      asSoonAsPossible: 0,
+      total: 0
+    },
+    lagPreferences: {
+      fsWithLag: 0,
+      fsWithoutLag: 0,
+      ssCount: 0,
+      ffCount: 0,
+      sfCount: 0,
+      averageLag: 0,
+      usesNegativeLag: false
+    },
+    activityDurationPatterns: {
+      averageDuration: 0,
+      shortActivities: 0,
+      mediumActivities: 0,
+      longActivities: 0
+    },
+    relationshipDensity: 0,
+    summaryText: ""
+  };
+
+  if (parsedActivities.length === 0) {
+    metrics.summaryText = "No activities to analyze";
+    return metrics;
+  }
+
+  // Calculate WBS depth
+  const wbsDepths: number[] = [];
+  for (const act of parsedActivities) {
+    if (act.wbs) {
+      const depth = act.wbs.split('.').length;
+      wbsDepths.push(depth);
+    }
+  }
+  
+  if (wbsDepths.length > 0) {
+    metrics.wbsAverageDepth = wbsDepths.reduce((a, b) => a + b, 0) / wbsDepths.length;
+    metrics.wbsMaxDepth = Math.max(...wbsDepths);
+  }
+
+  // Count constraint usage
+  for (const act of parsedActivities) {
+    const constraint = (act.constraint || "").toLowerCase();
+    if (constraint.includes("must start") || constraint === "mso") {
+      metrics.constraintUsage.mustStartOn++;
+    } else if (constraint.includes("start no earlier") || constraint === "snet") {
+      metrics.constraintUsage.startNoEarlierThan++;
+    } else if (constraint.includes("finish no later") || constraint === "fnlt") {
+      metrics.constraintUsage.finishNoLaterThan++;
+    } else if (constraint.includes("must finish") || constraint === "mfo") {
+      metrics.constraintUsage.mustFinishOn++;
+    } else if (constraint.includes("late") || constraint === "alap") {
+      metrics.constraintUsage.asLateAsPossible++;
+    } else if (constraint.includes("soon") || constraint === "asap") {
+      metrics.constraintUsage.asSoonAsPossible++;
+    }
+  }
+  metrics.constraintUsage.total = 
+    metrics.constraintUsage.mustStartOn +
+    metrics.constraintUsage.startNoEarlierThan +
+    metrics.constraintUsage.finishNoLaterThan +
+    metrics.constraintUsage.mustFinishOn +
+    metrics.constraintUsage.asLateAsPossible +
+    metrics.constraintUsage.asSoonAsPossible;
+
+  // Analyze relationship types and lag preferences
+  let totalLag = 0;
+  let lagCount = 0;
+  
+  for (const act of parsedActivities) {
+    const relType = (act.relationshipType || "FS").toUpperCase();
+    const lag = act.lag || 0;
+    
+    if (relType === "FS" || relType === "FINISH-TO-START") {
+      if (lag !== 0) {
+        metrics.lagPreferences.fsWithLag++;
+        totalLag += lag;
+        lagCount++;
+        if (lag < 0) {
+          metrics.lagPreferences.usesNegativeLag = true;
+        }
+      } else {
+        metrics.lagPreferences.fsWithoutLag++;
+      }
+    } else if (relType === "SS" || relType === "START-TO-START") {
+      metrics.lagPreferences.ssCount++;
+    } else if (relType === "FF" || relType === "FINISH-TO-FINISH") {
+      metrics.lagPreferences.ffCount++;
+    } else if (relType === "SF" || relType === "START-TO-FINISH") {
+      metrics.lagPreferences.sfCount++;
+    }
+    
+    // Count predecessors as relationships
+    if (act.predecessors && act.predecessors.length > 0) {
+      metrics.lagPreferences.fsWithoutLag += act.predecessors.length;
+    }
+  }
+  
+  if (lagCount > 0) {
+    metrics.lagPreferences.averageLag = totalLag / lagCount;
+  }
+
+  // Calculate activity duration patterns
+  const durations = parsedActivities.map(a => a.duration).filter(d => d > 0);
+  if (durations.length > 0) {
+    metrics.activityDurationPatterns.averageDuration = 
+      durations.reduce((a, b) => a + b, 0) / durations.length;
+    
+    metrics.activityDurationPatterns.shortActivities = durations.filter(d => d <= 5).length;
+    metrics.activityDurationPatterns.mediumActivities = durations.filter(d => d > 5 && d <= 20).length;
+    metrics.activityDurationPatterns.longActivities = durations.filter(d => d > 20).length;
+  }
+
+  // Calculate relationship density (avg predecessors per activity)
+  const predecessorCounts = parsedActivities.map(a => (a.predecessors || []).length);
+  metrics.relationshipDensity = 
+    predecessorCounts.reduce((a, b) => a + b, 0) / parsedActivities.length;
+
+  // Generate summary
+  const summaryParts: string[] = [];
+  
+  if (metrics.wbsAverageDepth > 0) {
+    summaryParts.push(`WBS depth: avg ${metrics.wbsAverageDepth.toFixed(1)}, max ${metrics.wbsMaxDepth}`);
+  }
+  
+  if (metrics.constraintUsage.total > 0) {
+    const constraintPreference = metrics.constraintUsage.startNoEarlierThan >= metrics.constraintUsage.mustStartOn
+      ? "prefers SNET over MSO"
+      : "prefers MSO over SNET";
+    summaryParts.push(constraintPreference);
+  }
+  
+  if (metrics.lagPreferences.fsWithLag > 0) {
+    summaryParts.push(`uses lag (avg ${metrics.lagPreferences.averageLag.toFixed(1)}d)`);
+  }
+  
+  if (metrics.lagPreferences.ssCount > 0 || metrics.lagPreferences.ffCount > 0) {
+    summaryParts.push("uses SS/FF relationships");
+  }
+  
+  metrics.summaryText = summaryParts.join("; ") || "Standard scheduling style";
+
+  // Only save style metrics if we have enough data to make meaningful inferences
+  // Minimum 5 activities required to establish patterns
+  const MIN_ACTIVITIES_FOR_LEARNING = 5;
+  if (parsedActivities.length >= MIN_ACTIVITIES_FOR_LEARNING) {
+    await saveStyleMetricsToProfile(userId, metrics);
+    console.log(`[PatternObserver] Import analysis complete:`, metrics.summaryText);
+  } else {
+    console.log(`[PatternObserver] Skipping style learning - only ${parsedActivities.length} activities (need ${MIN_ACTIVITIES_FOR_LEARNING}+)`);
+  }
+  
+  return metrics;
+}
+
+async function saveStyleMetricsToProfile(userId: string, metrics: ImportStyleMetrics): Promise<void> {
+  try {
+    // Save WBS depth preference
+    if (metrics.wbsAverageDepth > 0) {
+      const wbsRule = await storage.getUserLearnedRuleByKeywords(userId, "WBS_DEPTH", "preference");
+      if (wbsRule) {
+        await storage.updateUserLearnedRule(wbsRule.id, {
+          confidenceScore: Math.min(100, (wbsRule.confidenceScore || 50) + 5),
+          occurrenceCount: (wbsRule.occurrenceCount || 0) + 1
+        });
+      } else {
+        await storage.createUserLearnedRule({
+          userId,
+          triggerKeyword: "WBS_DEPTH",
+          targetKeyword: "preference",
+          ruleType: "must_precede",
+          confidenceScore: 70,
+          occurrenceCount: 1,
+          isActive: true,
+          isUserPreference: true,
+          sourceType: "observed",
+          projectScope: `avg_depth:${metrics.wbsAverageDepth.toFixed(1)};max_depth:${metrics.wbsMaxDepth}`
+        });
+      }
+    }
+
+    // Save constraint preference (SNET vs MSO)
+    if (metrics.constraintUsage.total > 0) {
+      const preferredConstraint = metrics.constraintUsage.startNoEarlierThan >= metrics.constraintUsage.mustStartOn
+        ? "SNET"
+        : "MSO";
+      
+      const constraintRule = await storage.getUserLearnedRuleByKeywords(userId, "CONSTRAINT_PREFERENCE", preferredConstraint);
+      if (constraintRule) {
+        await storage.updateUserLearnedRule(constraintRule.id, {
+          confidenceScore: Math.min(100, (constraintRule.confidenceScore || 50) + 5),
+          occurrenceCount: (constraintRule.occurrenceCount || 0) + 1
+        });
+      } else {
+        await storage.createUserLearnedRule({
+          userId,
+          triggerKeyword: "CONSTRAINT_PREFERENCE",
+          targetKeyword: preferredConstraint,
+          ruleType: "must_precede",
+          confidenceScore: 70,
+          occurrenceCount: 1,
+          isActive: true,
+          isUserPreference: true,
+          sourceType: "observed",
+          projectScope: `snet:${metrics.constraintUsage.startNoEarlierThan};mso:${metrics.constraintUsage.mustStartOn}`
+        });
+      }
+    }
+
+    // Save lag preference
+    if (metrics.lagPreferences.fsWithLag > 0 || metrics.lagPreferences.fsWithoutLag > 0) {
+      const usesLag = metrics.lagPreferences.fsWithLag > (metrics.lagPreferences.fsWithoutLag * 0.1);
+      const lagRule = await storage.getUserLearnedRuleByKeywords(userId, "LAG_PREFERENCE", usesLag ? "uses_lag" : "no_lag");
+      
+      if (lagRule) {
+        await storage.updateUserLearnedRule(lagRule.id, {
+          confidenceScore: Math.min(100, (lagRule.confidenceScore || 50) + 5),
+          occurrenceCount: (lagRule.occurrenceCount || 0) + 1
+        });
+      } else {
+        await storage.createUserLearnedRule({
+          userId,
+          triggerKeyword: "LAG_PREFERENCE",
+          targetKeyword: usesLag ? "uses_lag" : "no_lag",
+          ruleType: "must_precede",
+          confidenceScore: 70,
+          occurrenceCount: 1,
+          isActive: true,
+          isUserPreference: true,
+          sourceType: "observed",
+          projectScope: `avg_lag:${metrics.lagPreferences.averageLag.toFixed(1)};negative:${metrics.lagPreferences.usesNegativeLag}`
+        });
+      }
+    }
+
+    // Save relationship style preference (FS-only vs mixed)
+    const usesMixedRelationships = (metrics.lagPreferences.ssCount + metrics.lagPreferences.ffCount + metrics.lagPreferences.sfCount) > 0;
+    const relRule = await storage.getUserLearnedRuleByKeywords(
+      userId, 
+      "RELATIONSHIP_STYLE", 
+      usesMixedRelationships ? "mixed" : "fs_only"
+    );
+    
+    if (relRule) {
+      await storage.updateUserLearnedRule(relRule.id, {
+        confidenceScore: Math.min(100, (relRule.confidenceScore || 50) + 5),
+        occurrenceCount: (relRule.occurrenceCount || 0) + 1
+      });
+    } else {
+      await storage.createUserLearnedRule({
+        userId,
+        triggerKeyword: "RELATIONSHIP_STYLE",
+        targetKeyword: usesMixedRelationships ? "mixed" : "fs_only",
+        ruleType: "must_precede",
+        confidenceScore: 70,
+        occurrenceCount: 1,
+        isActive: true,
+        isUserPreference: true,
+        sourceType: "observed",
+        projectScope: `ss:${metrics.lagPreferences.ssCount};ff:${metrics.lagPreferences.ffCount};sf:${metrics.lagPreferences.sfCount}`
+      });
+    }
+
+    console.log(`[PatternObserver] Saved style metrics to user ${userId} profile`);
+  } catch (error) {
+    console.error(`[PatternObserver] Error saving style metrics:`, error);
+  }
+}

@@ -52,34 +52,46 @@ export class XERParser {
     const tasks = this.tables.get('TASK') || [];
     const taskpred = this.tables.get('TASKPRED') || [];
     
-    // Build predecessor map
-    const predMap = new Map<string, string[]>();
+    // Build predecessor map with relationship type and lag
+    const predMap = new Map<string, { predId: string; relType: string; lag: number }[]>();
     taskpred.forEach(pred => {
       const taskId = pred.task_id;
       const predId = pred.pred_task_id;
+      const relType = pred.pred_type || 'FS'; // PR_FS, PR_SS, PR_FF, PR_SF
+      const lag = parseFloat(pred.lag_hr_cnt) / 8 || 0;
+      
       if (!predMap.has(taskId)) {
         predMap.set(taskId, []);
       }
-      predMap.get(taskId)?.push(predId);
+      predMap.get(taskId)?.push({ predId, relType: this.mapRelType(relType), lag });
     });
     
-    // Convert to our Activity format
-    const activities: Activity[] = tasks.map((task, index) => ({
-      id: crypto.randomUUID(),
-      activityId: task.task_code || task.task_id || `A${(index + 1).toString().padStart(3, '0')}`,
-      activityName: task.task_name || 'Unnamed Activity',
-      duration: parseInt(task.target_drtn_hr_cnt) / 8 || parseInt(task.remain_drtn_hr_cnt) / 8 || 1,
-      predecessors: predMap.get(task.task_id) || [],
-      successors: [],
-      status: this.mapStatus(task.status_code),
-      percentComplete: parseFloat(task.phys_complete_pct) || 0,
-      startDate: this.formatDate(task.target_start_date || task.act_start_date),
-      finishDate: this.formatDate(task.target_end_date || task.act_end_date),
-      wbs: task.wbs_id || '',
-      resources: [],
-      totalFloat: parseFloat(task.total_float_hr_cnt) / 8 || 0,
-      freeFloat: parseFloat(task.free_float_hr_cnt) / 8 || 0
-    }));
+    // Convert to our Activity format with constraint and relationship data
+    const activities: Activity[] = tasks.map((task, index) => {
+      const preds = predMap.get(task.task_id) || [];
+      const firstPred = preds[0];
+      
+      return {
+        id: crypto.randomUUID(),
+        activityId: task.task_code || task.task_id || `A${(index + 1).toString().padStart(3, '0')}`,
+        activityName: task.task_name || 'Unnamed Activity',
+        duration: parseInt(task.target_drtn_hr_cnt) / 8 || parseInt(task.remain_drtn_hr_cnt) / 8 || 1,
+        predecessors: preds.map(p => p.predId),
+        successors: [],
+        status: this.mapStatus(task.status_code),
+        percentComplete: parseFloat(task.phys_complete_pct) || 0,
+        startDate: this.formatDate(task.target_start_date || task.act_start_date),
+        finishDate: this.formatDate(task.target_end_date || task.act_end_date),
+        wbs: task.wbs_id || '',
+        resources: [],
+        totalFloat: parseFloat(task.total_float_hr_cnt) / 8 || 0,
+        freeFloat: parseFloat(task.free_float_hr_cnt) / 8 || 0,
+        constraintType: this.mapConstraintType(task.cstr_type),
+        constraintDate: this.formatDate(task.cstr_date),
+        relationshipType: firstPred?.relType || 'FS',
+        lag: firstPred?.lag || 0
+      } as Activity;
+    });
     
     // Extract project info
     const project = this.tables.get('PROJECT')?.[0] || {};
@@ -109,6 +121,30 @@ export class XERParser {
     // P6 date format: YYYY-MM-DD HH:MM
     const date = new Date(dateStr);
     return date.toISOString().split('T')[0];
+  }
+  
+  private mapRelType(p6Type: string): string {
+    switch (p6Type) {
+      case 'PR_FS': return 'FS';
+      case 'PR_SS': return 'SS';
+      case 'PR_FF': return 'FF';
+      case 'PR_SF': return 'SF';
+      default: return 'FS';
+    }
+  }
+  
+  private mapConstraintType(p6Constraint: string): Activity['constraintType'] {
+    switch (p6Constraint) {
+      case 'CS_ASAP': return 'ASAP';
+      case 'CS_ALAP': return 'ALAP';
+      case 'CS_MSO': return 'MSO';
+      case 'CS_MFO': return 'MFO';
+      case 'CS_SNET': return 'SNET';
+      case 'CS_SNLT': return 'SNLT';
+      case 'CS_FNET': return 'FNET';
+      case 'CS_FNLT': return 'FNLT';
+      default: return undefined;
+    }
   }
 }
 
@@ -153,7 +189,9 @@ export class MSProjectXMLParser {
         wbs: wbs || '',
         resources: this.extractResourcesFromXml(taskXml),
         totalFloat: parseInt(this.extractXmlValue(taskXml, 'TotalSlack')) / 480 || 0, // Convert minutes to days
-        isCritical: this.extractXmlValue(taskXml, 'Critical') === '1'
+        isCritical: this.extractXmlValue(taskXml, 'Critical') === '1',
+        constraintType: this.mapMSPConstraintType(this.extractXmlValue(taskXml, 'ConstraintType')),
+        constraintDate: this.formatMSPDate(this.extractXmlValue(taskXml, 'ConstraintDate'))
       };
       
       activities.push(activity);
@@ -162,7 +200,7 @@ export class MSProjectXMLParser {
       }
     });
     
-    // Second pass: set up predecessors
+    // Second pass: set up predecessors with relationship type and lag
     taskMatches.forEach(taskXml => {
       const taskId = this.extractXmlValue(taskXml, 'UID');
       const activity = taskMap.get(taskId);
@@ -170,14 +208,31 @@ export class MSProjectXMLParser {
       
       // Extract predecessor links
       const predLinkMatches = taskXml.match(/<PredecessorLink>[\s\S]*?<\/PredecessorLink>/g) || [];
-      predLinkMatches.forEach(predLinkXml => {
+      let firstRelType: string | undefined;
+      let firstLag: number | undefined;
+      
+      predLinkMatches.forEach((predLinkXml, idx) => {
         const predUID = this.extractXmlValue(predLinkXml, 'PredecessorUID');
+        const linkType = this.extractXmlValue(predLinkXml, 'Type');
+        const lagValue = parseInt(this.extractXmlValue(predLinkXml, 'LinkLag')) / 4800 || 0; // Convert tenths of min to days
+        
+        if (idx === 0) {
+          firstRelType = this.mapMSPRelType(linkType);
+          firstLag = lagValue;
+        }
+        
         const predActivity = taskMap.get(predUID);
         if (predActivity) {
           activity.predecessors.push(predActivity.activityId);
           predActivity.successors.push(activity.activityId);
         }
       });
+      
+      // Store first predecessor's relationship type and lag for style analysis
+      if (firstRelType !== undefined) {
+        (activity as any).relationshipType = firstRelType;
+        (activity as any).lag = firstLag;
+      }
     });
     
     // Extract project info
@@ -238,6 +293,32 @@ export class MSProjectXMLParser {
     if (!dateStr) return '';
     const date = new Date(dateStr);
     return date.toISOString().split('T')[0];
+  }
+  
+  private mapMSPRelType(mspType: string): string {
+    // MS Project Type values: 0=FF, 1=FS, 2=SF, 3=SS
+    switch (mspType) {
+      case '0': return 'FF';
+      case '1': return 'FS';
+      case '2': return 'SF';
+      case '3': return 'SS';
+      default: return 'FS';
+    }
+  }
+  
+  private mapMSPConstraintType(mspConstraint: string): Activity['constraintType'] {
+    // MS Project ConstraintType values: 0=ASAP, 1=ALAP, 2=MSO, 3=MFO, 4=SNET, 5=SNLT, 6=FNET, 7=FNLT
+    switch (mspConstraint) {
+      case '0': return 'ASAP';
+      case '1': return 'ALAP';
+      case '2': return 'MSO';
+      case '3': return 'MFO';
+      case '4': return 'SNET';
+      case '5': return 'SNLT';
+      case '6': return 'FNET';
+      case '7': return 'FNLT';
+      default: return undefined;
+    }
   }
 }
 

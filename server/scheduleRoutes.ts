@@ -12,6 +12,7 @@ import { generateScheduleWithAI } from "./scheduleAITools";
 import { poe } from "./poeClient";
 import { parseScheduleFile } from "./scheduleParser";
 import { embeddingService } from "./embeddingService";
+import { analyzeImportedSchedule } from "./patternObserver";
 
 // Background function to generate embeddings for a project
 async function generateEmbeddingsForProject(projectId: string): Promise<void> {
@@ -305,6 +306,32 @@ export function registerScheduleRoutes(app: Express) {
       if (embeddingService.isConfigured()) {
         generateEmbeddingsForProject(req.params.projectId).catch(err => {
           console.error("Background embedding generation failed:", err);
+        });
+      }
+      
+      // Trigger style extraction and learning in background (non-blocking)
+      // This analyzes the user's scheduling style from the imported data
+      const userId = (req.user as any)?.claims?.sub;
+      if (userId) {
+        // Map parser fields to analyzer expected fields
+        // constraintType -> constraint (for constraint usage analysis)
+        analyzeImportedSchedule(userId, req.params.projectId, parsedData.activities.map(act => {
+          const anyAct = act as any;
+          return {
+            activityId: act.activityId,
+            activityName: act.activityName,
+            duration: act.duration,
+            predecessors: act.predecessors || [],
+            wbs: act.wbs,
+            constraint: anyAct.constraintType || anyAct.constraint,
+            constraintDate: anyAct.constraintDate,
+            lag: anyAct.lag || 0,
+            relationshipType: anyAct.relationshipType || 'FS'
+          };
+        })).then(metrics => {
+          console.log(`[Import] Style analysis complete for user ${userId}:`, metrics.summaryText);
+        }).catch(err => {
+          console.error("Background style analysis failed:", err);
         });
       }
       
