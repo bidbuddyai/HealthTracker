@@ -2,20 +2,34 @@ import { embeddingService } from "./embeddingService";
 import { poe } from "./poeClient";
 import type { ScheduleEmbedding } from "@shared/schema";
 
+const SUMMARIZATION_TOKEN_THRESHOLD = 20000;
+
+interface ChunkWithDistance {
+  chunk: ScheduleEmbedding;
+  distance: number;
+}
+
 interface RetrievalResult {
-  chunks: Array<{ chunk: ScheduleEmbedding; distance: number }>;
+  chunks: ChunkWithDistance[];
   summary?: string;
-  tokensSaved?: number;
+  totalTokens: number;
+  wasSummarized: boolean;
 }
 
 interface EnrichedContext {
   originalContext: any;
-  retrievedChunks: string[];
+  retrievedChunks: ChunkWithDistance[];
   chunkSummary?: string;
   embeddingsAvailable: boolean;
+  totalTokens: number;
+  wasSummarized: boolean;
 }
 
 export class RAGService {
+  private estimateTokens(text: string): number {
+    return Math.ceil(text.length / 4);
+  }
+
   private summarizeChunks = async (chunks: string[], query: string): Promise<string> => {
     if (chunks.length === 0) return "";
     
@@ -41,9 +55,30 @@ export class RAGService {
       return response.choices[0]?.message?.content || "";
     } catch (error) {
       console.error("[RAG] Failed to summarize chunks:", error);
-      return chunksText.slice(0, 2000);
+      return chunksText.slice(0, 8000);
     }
   };
+
+  private formatChunksForPrompt(chunks: ChunkWithDistance[]): string {
+    if (chunks.length === 0) return "";
+
+    const formattedChunks: string[] = [];
+    
+    for (let i = 0; i < chunks.length; i++) {
+      const { chunk, distance } = chunks[i];
+      const relevanceScore = Math.round((1 - distance) * 100);
+      
+      let chunkHeader = `[${chunk.entityType}]`;
+      if (chunk.entityId) {
+        chunkHeader += ` (${chunk.entityId})`;
+      }
+      chunkHeader += ` - Relevance: ${relevanceScore}%`;
+      
+      formattedChunks.push(`--- Chunk ${i + 1} ${chunkHeader} ---\n${chunk.chunkText}`);
+    }
+
+    return formattedChunks.join("\n\n");
+  }
 
   async retrieveRelevantContext(
     projectId: string,
@@ -51,13 +86,13 @@ export class RAGService {
     options: {
       topK?: number;
       entityTypes?: string[];
-      summarize?: boolean;
+      forceSummarize?: boolean;
     } = {}
   ): Promise<RetrievalResult> {
-    const { topK = 5, entityTypes, summarize = false } = options;
+    const { topK = 8, entityTypes, forceSummarize = false } = options;
 
     if (!embeddingService.isConfigured()) {
-      return { chunks: [], summary: undefined };
+      return { chunks: [], summary: undefined, totalTokens: 0, wasSummarized: false };
     }
 
     try {
@@ -68,16 +103,30 @@ export class RAGService {
         entityTypes
       );
 
+      const totalTokens = chunks.reduce((sum, c) => {
+        const tokenCount = c.chunk.tokenCount || this.estimateTokens(c.chunk.chunkText);
+        if (!c.chunk.tokenCount) {
+          console.log(`[RAG] Estimated tokens for chunk: ${tokenCount}`);
+        }
+        return sum + tokenCount;
+      }, 0);
+      
       let summary: string | undefined;
-      if (summarize && chunks.length > 0) {
+      let wasSummarized = false;
+
+      if (forceSummarize || totalTokens > SUMMARIZATION_TOKEN_THRESHOLD) {
+        console.log(`[RAG] Token count ${totalTokens} exceeds threshold ${SUMMARIZATION_TOKEN_THRESHOLD}, summarizing...`);
         const chunkTexts = chunks.map(c => c.chunk.chunkText);
         summary = await this.summarizeChunks(chunkTexts, userQuery);
+        wasSummarized = true;
+      } else {
+        console.log(`[RAG] Retrieved ${chunks.length} chunks, ${totalTokens} tokens (below ${SUMMARIZATION_TOKEN_THRESHOLD} threshold, skipping summarization)`);
       }
 
-      return { chunks, summary };
+      return { chunks, summary, totalTokens, wasSummarized };
     } catch (error) {
       console.error("[RAG] Error retrieving context:", error);
-      return { chunks: [], summary: undefined };
+      return { chunks: [], summary: undefined, totalTokens: 0, wasSummarized: false };
     }
   }
 
@@ -92,27 +141,29 @@ export class RAGService {
       return {
         originalContext,
         retrievedChunks: [],
-        embeddingsAvailable: false
+        embeddingsAvailable: false,
+        totalTokens: 0,
+        wasSummarized: false
       };
     }
 
     const retrieval = await this.retrieveRelevantContext(projectId, userQuery, {
-      topK: 5,
-      summarize: true
+      topK: 8,
+      forceSummarize: false
     });
-
-    const retrievedChunks = retrieval.chunks.map(c => c.chunk.chunkText);
 
     return {
       originalContext,
-      retrievedChunks,
-      chunkSummary: retrieval.summary,
-      embeddingsAvailable: true
+      retrievedChunks: retrieval.chunks,
+      chunkSummary: retrieval.wasSummarized ? retrieval.summary : undefined,
+      embeddingsAvailable: true,
+      totalTokens: retrieval.totalTokens,
+      wasSummarized: retrieval.wasSummarized
     };
   }
 
   formatContextForPrompt(enrichedContext: EnrichedContext): string {
-    const { originalContext, retrievedChunks, chunkSummary, embeddingsAvailable } = enrichedContext;
+    const { originalContext, retrievedChunks, chunkSummary, embeddingsAvailable, wasSummarized, totalTokens } = enrichedContext;
 
     let contextStr = "";
 
@@ -130,10 +181,14 @@ export class RAGService {
       }
     }
 
-    if (embeddingsAvailable && chunkSummary) {
-      contextStr += `Relevant Schedule Context (from semantic search):\n${chunkSummary}\n\n`;
-    } else if (retrievedChunks.length > 0) {
-      contextStr += `Relevant Schedule Details:\n${retrievedChunks.slice(0, 3).join("\n\n")}\n\n`;
+    if (embeddingsAvailable) {
+      if (wasSummarized && chunkSummary) {
+        contextStr += `Relevant Schedule Context (summarized from ${totalTokens} tokens):\n${chunkSummary}\n\n`;
+      } else if (retrievedChunks.length > 0) {
+        contextStr += `Relevant Schedule Details (${retrievedChunks.length} chunks, ~${totalTokens} tokens):\n\n`;
+        contextStr += this.formatChunksForPrompt(retrievedChunks);
+        contextStr += "\n\n";
+      }
     }
 
     return contextStr;
