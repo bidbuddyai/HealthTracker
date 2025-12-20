@@ -140,11 +140,16 @@ export default function ScheduleManager({ projectId, meetingId }: ScheduleManage
   
   const handleScheduleUpload = handleScheduleImport; // For backward compatibility
   
-  const handleExportSchedule = async (scheduleId: string, format: 'pdf' | 'xml' | 'xer') => {
+  const handleExportSchedule = async (_scheduleId: string, format: 'pdf' | 'xml' | 'xer' | 'csv' | 'json') => {
     try {
-      const response = await fetch(`/api/schedules/${scheduleId}/export/${format}`);
+      // Use project-level export endpoint which exports all project activities
+      const response = await fetch(`/api/projects/${projectId}/export/${format}`, {
+        credentials: 'include',
+      });
+      
       if (!response.ok) {
-        throw new Error('Export failed');
+        const errorData = await response.json().catch(() => ({ error: 'Export failed' }));
+        throw new Error(errorData.error || 'Export failed');
       }
       
       const blob = await response.blob();
@@ -152,9 +157,16 @@ export default function ScheduleManager({ projectId, meetingId }: ScheduleManage
       const a = document.createElement('a');
       a.href = url;
       
-      // Determine filename based on format
-      const extension = format === 'xml' ? 'xml' : format === 'xer' ? 'xer' : 'html';
-      a.download = `schedule_${scheduleId}.${extension}`;
+      // Use Content-Disposition header for filename if available
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = `schedule_export.${format}`;
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1].replace(/"/g, '');
+        }
+      }
+      a.download = filename;
       
       document.body.appendChild(a);
       a.click();
@@ -173,10 +185,10 @@ export default function ScheduleManager({ projectId, meetingId }: ScheduleManage
           description: `Schedule exported as ${format.toUpperCase()} successfully.`,
         });
       }
-    } catch (error) {
+    } catch (error: any) {
       toast({
         title: "Export failed",
-        description: "Failed to export schedule. Please try again.",
+        description: error.message || "Failed to export schedule. Please try again.",
         variant: "destructive",
       });
     }
@@ -399,7 +411,7 @@ export default function ScheduleManager({ projectId, meetingId }: ScheduleManage
                               {schedule.startDate} to {schedule.finishDate}
                             </div>
                             <div className="text-sm text-gray-500">
-                              Created: {new Date(schedule.createdAt).toLocaleDateString()}
+                              Data Date: {schedule.dataDate}
                             </div>
                           </div>
                           <Badge variant="outline">3-Week</Badge>
