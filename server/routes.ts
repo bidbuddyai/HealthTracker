@@ -2620,19 +2620,20 @@ Return ONLY the enhanced prompt text, nothing else.`;
 
       const { primaryTrade, templateCategories } = req.body;
       
-      if (!primaryTrade || !templateCategories || !Array.isArray(templateCategories)) {
-        return res.status(400).json({ error: "Missing required fields: primaryTrade and templateCategories" });
+      if (!primaryTrade || typeof primaryTrade !== 'string') {
+        return res.status(400).json({ error: "Missing required field: primaryTrade" });
+      }
+      
+      if (!templateCategories || !Array.isArray(templateCategories) || templateCategories.length === 0) {
+        return res.status(400).json({ error: "Missing required field: templateCategories (must be non-empty array)" });
       }
 
-      // 1. Update user profile with trade selection
-      const user = await storage.getUser(userId);
-      if (user) {
-        await storage.upsertUser({
-          ...user,
-          primaryTrade: primaryTrade,
-          specialties: templateCategories
-        });
-      }
+      // 1. Update user profile with trade selection using upsertUser
+      await storage.upsertUser({
+        id: userId,
+        primaryTrade: primaryTrade,
+        specialties: templateCategories
+      });
 
       // 2. Fetch templates for selected categories and copy rules to user's learned rules
       let rulesLoaded = 0;
@@ -2640,26 +2641,47 @@ Return ONLY the enhanced prompt text, nothing else.`;
         const templates = await storage.getTradeTemplatesByCategory(category);
         
         for (const template of templates) {
-          const logicRules = template.logicRules as Array<{
+          // Safely parse logicRules - it may be stored as JSON string or already parsed
+          let logicRules: Array<{
             predecessorKeyword: string;
             successorKeyword: string;
             relationshipType: string;
             lag?: number;
             description?: string;
-          }>;
+          }> = [];
+          
+          try {
+            if (typeof template.logicRules === 'string') {
+              logicRules = JSON.parse(template.logicRules);
+            } else if (Array.isArray(template.logicRules)) {
+              logicRules = template.logicRules;
+            }
+          } catch (parseError) {
+            console.warn(`[Brain Load] Failed to parse logicRules for template ${template.id}:`, parseError);
+            continue;
+          }
 
           // Copy each logic rule to user's personal learned rules
           for (const rule of logicRules) {
-            await storage.createUserLearnedRule({
-              userId,
-              triggerKeyword: rule.predecessorKeyword,
-              ruleType: "must_precede",
-              targetKeyword: rule.successorKeyword,
-              confidenceScore: 100, // Template rules start with max confidence
-              occurrenceCount: 1,
-              isActive: true
-            });
-            rulesLoaded++;
+            if (!rule.predecessorKeyword || !rule.successorKeyword) {
+              continue; // Skip invalid rules
+            }
+            
+            try {
+              await storage.createUserLearnedRule({
+                userId,
+                triggerKeyword: rule.predecessorKeyword,
+                ruleType: "must_precede",
+                targetKeyword: rule.successorKeyword,
+                confidenceScore: 100, // Template rules start with max confidence
+                occurrenceCount: 1,
+                isActive: true
+              });
+              rulesLoaded++;
+            } catch (ruleError) {
+              // Log but don't fail on duplicate rules
+              console.warn(`[Brain Load] Failed to create rule: ${rule.predecessorKeyword} -> ${rule.successorKeyword}`, ruleError);
+            }
           }
         }
       }

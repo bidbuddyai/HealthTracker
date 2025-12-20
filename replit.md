@@ -13,6 +13,13 @@ Preferred communication style: Simple, everyday language.
 - **Secure Route Protection**: All API endpoints and application routes protected with authentication middleware
 - **Graceful Authentication Flow**: Automatic redirection to login for unauthenticated users with session preservation
 
+## Adaptive Learning & Onboarding
+- **Trade Selection Onboarding**: New users select their primary trade (Abatement/Demolition, General Contractor, MEP Subcontractor, or Custom/Hybrid)
+- **Brain Load System**: Copies industry-specific scheduling logic rules from trade templates to user's personal learned rules
+- **Trade Templates**: Pre-seeded templates for Abatement, Demolition, General Construction, and MEP with activity sequences and relationship logic
+- **User Learned Rules**: Personal rule storage with confidence scoring for AI-assisted scheduling suggestions
+- **Custom Hybrid Mode**: Users can select multiple trade categories to build a customized rule set
+
 ## Advanced Scheduling Features
 - **Complete CPM Engine**: Full Critical Path Method calculations with forward/backward pass, float calculations, and constraint handling
 - **Advanced Activity Types**: Support for Milestones (zero duration), Level of Effort activities, Hammock activities (spanning), and WBS Summary rollups

@@ -252,6 +252,8 @@ export class MemStorage implements IStorage {
       firstName: userData.firstName ?? null,
       lastName: userData.lastName ?? null,
       profileImageUrl: userData.profileImageUrl ?? null,
+      primaryTrade: userData.primaryTrade ?? null,
+      specialties: userData.specialties ?? null,
       createdAt: userData.createdAt ?? new Date(),
       updatedAt: new Date()
     };

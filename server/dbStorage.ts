@@ -38,6 +38,18 @@ export class DbStorage implements IStorage {
 
   async upsertUser(userData: UpsertUser): Promise<User> {
     try {
+      // Build the update set object, only including fields that are provided
+      const updateSet: Record<string, unknown> = {
+        updatedAt: new Date()
+      };
+      
+      if (userData.email !== undefined) updateSet.email = userData.email;
+      if (userData.firstName !== undefined) updateSet.firstName = userData.firstName;
+      if (userData.lastName !== undefined) updateSet.lastName = userData.lastName;
+      if (userData.profileImageUrl !== undefined) updateSet.profileImageUrl = userData.profileImageUrl;
+      if (userData.primaryTrade !== undefined) updateSet.primaryTrade = userData.primaryTrade;
+      if (userData.specialties !== undefined) updateSet.specialties = userData.specialties;
+
       const result = await db
         .insert(users)
         .values({
@@ -46,18 +58,14 @@ export class DbStorage implements IStorage {
           firstName: userData.firstName,
           lastName: userData.lastName,
           profileImageUrl: userData.profileImageUrl,
+          primaryTrade: userData.primaryTrade,
+          specialties: userData.specialties,
           createdAt: userData.createdAt || new Date(),
           updatedAt: new Date()
         })
         .onConflictDoUpdate({
           target: users.id,
-          set: {
-            email: userData.email,
-            firstName: userData.firstName,
-            lastName: userData.lastName,
-            profileImageUrl: userData.profileImageUrl,
-            updatedAt: new Date()
-          }
+          set: updateSet
         })
         .returning();
       
