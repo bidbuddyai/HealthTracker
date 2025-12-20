@@ -17,6 +17,7 @@ import { SYSTEM_ASSISTANT, ToolSchema } from "./assistantTools";
 import { registerScheduleRoutes } from "./scheduleRoutes";
 import { ObjectStorageService, replitStorageClient } from "./objectStorage";
 import { analyzeDocuments, type DocumentAnalysis, type ProcessingOptions } from "./documentAnalyzer";
+import { ragService } from "./ragService";
 
 // Project authorization helper
 async function hasProjectAccess(userId: string, projectId: string): Promise<boolean> {
@@ -2078,9 +2079,22 @@ Return ONLY the enhanced prompt text, nothing else.`;
       const { query, model = "Claude-Sonnet-4", context, projectId } = req.body;
       const userId = req.user?.claims?.sub;
       
+      // Enrich context with RAG retrieval if available
+      let enrichedContextStr: string;
+      try {
+        const enrichedContext = await ragService.enrichContext(projectId, query, context);
+        enrichedContextStr = ragService.formatContextForPrompt(enrichedContext);
+        if (enrichedContext.embeddingsAvailable) {
+          console.log(`[RAG] Enriched context with ${enrichedContext.retrievedChunks.length} chunks`);
+        }
+      } catch (ragError) {
+        console.warn("[RAG] Failed to enrich context, using original:", ragError);
+        enrichedContextStr = `Context: ${JSON.stringify(context)}`;
+      }
+      
       const messages = [
         { role: "system" as const, content: SYSTEM_ASSISTANT },
-        { role: "user" as const, content: `Context: ${JSON.stringify(context)}\n\nProject ID: ${projectId}\n\nQuery: ${query}` }
+        { role: "user" as const, content: `${enrichedContextStr}\n\nProject ID: ${projectId}\n\nQuery: ${query}` }
       ];
 
       const response = await poe.chat.completions.create({
@@ -2590,6 +2604,50 @@ Return ONLY the enhanced prompt text, nothing else.`;
   // Get available AI models
   app.get("/api/ai/models", isAuthenticated, async (req, res) => {
     res.json(POE_MODELS);
+  });
+
+  // RAG Status endpoint - check embedding status for a project
+  app.get("/api/projects/:projectId/rag/status", isAuthenticated, requireProjectAccess, async (req: any, res) => {
+    try {
+      const stats = await ragService.getEmbeddingStats(req.params.projectId);
+      res.json({
+        projectId: req.params.projectId,
+        embeddingsCount: stats.chunkCount,
+        openaiConfigured: stats.isConfigured,
+        ragEnabled: stats.isConfigured && stats.chunkCount > 0
+      });
+    } catch (error) {
+      console.error("Error getting RAG status:", error);
+      res.status(500).json({ error: "Failed to get RAG status" });
+    }
+  });
+
+  // Trigger embedding generation for a project
+  app.post("/api/projects/:projectId/rag/generate", isAuthenticated, requireProjectAccess, async (req: any, res) => {
+    try {
+      const { generateEmbeddingsForProject } = await import("./scheduleRoutes");
+      
+      // Check if OpenAI is configured
+      const stats = await ragService.getEmbeddingStats(req.params.projectId);
+      if (!stats.isConfigured) {
+        return res.status(400).json({ 
+          error: "OpenAI API key not configured. Please add OPENAI_API_KEY to secrets." 
+        });
+      }
+      
+      // Trigger generation in background
+      generateEmbeddingsForProject(req.params.projectId).catch(err => {
+        console.error("Background embedding generation failed:", err);
+      });
+      
+      res.json({ 
+        success: true, 
+        message: "Embedding generation started in background" 
+      });
+    } catch (error) {
+      console.error("Error triggering embedding generation:", error);
+      res.status(500).json({ error: "Failed to start embedding generation" });
+    }
   });
 
   // AI Chat endpoint (streaming chat with model selection)

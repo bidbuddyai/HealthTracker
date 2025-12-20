@@ -477,6 +477,42 @@ export const scheduleVersions = pgTable("schedule_versions", {
   changesSummary: jsonb("changes_summary") // Summary of what changed
 });
 
+// Embedding entity type enum for RAG system
+export const embeddingEntityTypeEnum = pgEnum("embedding_entity_type", [
+  "ActivityCluster",
+  "WbsSection", 
+  "CriticalPath",
+  "CalendarBlock",
+  "TiaScenario",
+  "MeetingNotes",
+  "Relationship"
+]);
+
+// Schedule embeddings table for RAG retrieval
+// Note: The 'embedding' column is a vector(1536) type created via SQL
+// This table stores chunked schedule data with OpenAI embeddings
+export const scheduleEmbeddings = pgTable("schedule_embeddings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  projectId: varchar("project_id").references(() => projects.id).notNull(),
+  entityType: embeddingEntityTypeEnum("entity_type").notNull(),
+  entityId: varchar("entity_id"), // Reference to specific activity, WBS, etc.
+  chunkOrdinal: integer("chunk_ordinal").default(0), // Order for multi-chunk entities
+  chunkText: text("chunk_text").notNull(), // The text that was embedded
+  chunkSummary: text("chunk_summary"), // Optional Poe-generated summary for keyword search
+  metadata: jsonb("metadata"), // Additional context (activity IDs, dates, etc.)
+  tokenCount: integer("token_count"), // Approximate token count
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull()
+}, (table) => ({
+  projectIdx: index("schedule_embeddings_project_idx").on(table.projectId),
+  entityTypeIdx: index("schedule_embeddings_entity_type_idx").on(table.entityType),
+  entityIdx: index("schedule_embeddings_entity_idx").on(table.entityId)
+}));
+
+export const insertScheduleEmbeddingSchema = createInsertSchema(scheduleEmbeddings).omit({ 
+  id: true, createdAt: true, updatedAt: true 
+});
+
 // Insert schemas
 export const insertProjectSchema = createInsertSchema(projects).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertWbsSchema = createInsertSchema(wbs).omit({ id: true });
@@ -561,6 +597,8 @@ export type ProjectMember = typeof projectMembers.$inferSelect;
 export type InsertProjectMember = z.infer<typeof insertProjectMemberSchema>;
 export type ScheduleVersion = typeof scheduleVersions.$inferSelect;
 export type InsertScheduleVersion = z.infer<typeof insertScheduleVersionSchema>;
+export type ScheduleEmbedding = typeof scheduleEmbeddings.$inferSelect;
+export type InsertScheduleEmbedding = z.infer<typeof insertScheduleEmbeddingSchema>;
 
 // Export-specific types for schedule export functionality
 export interface ProjectSchedule {

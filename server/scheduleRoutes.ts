@@ -11,6 +11,54 @@ import type { ProjectSchedule, ScheduleActivity } from "@shared/schema";
 import { generateScheduleWithAI } from "./scheduleAITools";
 import { poe } from "./poeClient";
 import { parseScheduleFile } from "./scheduleParser";
+import { embeddingService } from "./embeddingService";
+
+// Background function to generate embeddings for a project
+async function generateEmbeddingsForProject(projectId: string): Promise<void> {
+  try {
+    console.log(`[RAG] Starting embedding generation for project ${projectId}`);
+    
+    // Fetch all project data
+    const activities = await storage.getActivitiesByProject(projectId);
+    const wbsItems = await storage.getWbsByProject(projectId);
+    const relationships = await storage.getRelationshipsByProject(projectId);
+    const calendars = await storage.getCalendarsByProject(projectId);
+    const tiaScenarios = await storage.getTiaScenariosByProject(projectId);
+    
+    // Create WBS lookup map
+    const wbsMap = new Map(wbsItems.map(w => [w.id, w]));
+    
+    // Generate chunks
+    const activityChunks = embeddingService.chunkActivities(activities, relationships, wbsMap);
+    const wbsChunks = embeddingService.chunkWbs(wbsItems, activities);
+    const criticalPathChunks = embeddingService.chunkCriticalPath(activities, relationships);
+    const calendarChunks = embeddingService.chunkCalendars(calendars);
+    const tiaChunks = embeddingService.chunkTiaScenarios(tiaScenarios);
+    
+    const allChunks = [
+      ...activityChunks,
+      ...wbsChunks,
+      ...criticalPathChunks,
+      ...calendarChunks,
+      ...tiaChunks
+    ];
+    
+    if (allChunks.length === 0) {
+      console.log(`[RAG] No chunks to embed for project ${projectId}`);
+      return;
+    }
+    
+    // Store embeddings
+    const storedCount = await embeddingService.storeEmbeddings(projectId, allChunks);
+    console.log(`[RAG] Successfully stored ${storedCount} embeddings for project ${projectId}`);
+  } catch (error) {
+    console.error(`[RAG] Failed to generate embeddings for project ${projectId}:`, error);
+    throw error;
+  }
+}
+
+// Export for use by other modules
+export { generateEmbeddingsForProject };
 
 // Export interface for schedule activities used by the AI and parsers
 export interface ScheduleActivityData {
@@ -252,6 +300,13 @@ export function registerScheduleRoutes(app: Express) {
       let message = `Import complete: ${createdCount} new`;
       if (updatedCount > 0) message += `, ${updatedCount} updated`;
       if (skippedCount > 0) message += `, ${skippedCount} skipped`;
+      
+      // Trigger embedding generation in background (non-blocking)
+      if (embeddingService.isConfigured()) {
+        generateEmbeddingsForProject(req.params.projectId).catch(err => {
+          console.error("Background embedding generation failed:", err);
+        });
+      }
       
       res.json({
         success: true,

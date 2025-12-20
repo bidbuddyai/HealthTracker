@@ -68,6 +68,23 @@ Preferred communication style: Simple, everyday language.
 - **Streaming**: OpenAI-compatible streaming responses for real-time interactions
 - **Natural Language Processing**: AI can understand and execute complex scheduling commands like "Create a 5-day work calendar with US holidays" or "Analyze 10-day delay impact on concrete pour"
 
+## RAG (Retrieval-Augmented Generation) Architecture
+- **Vector Database**: PostgreSQL with pgvector extension for semantic search
+- **Embeddings**: OpenAI text-embedding-3-small (1536 dimensions) for vectorizing schedule data
+- **Chunking Strategy**: Intelligent chunking of schedule data into logical units:
+  - Activity Clusters: Groups of 10-12 related activities with relationships
+  - WBS Sections: Work breakdown structure nodes with summaries
+  - Critical Path Segments: Critical path activities in sequence
+  - Calendar Blocks: Calendar definitions with exceptions
+  - TIA Scenarios: Time impact analysis summaries
+- **Retrieval Flow**: On AI queries, semantic search retrieves top 5 most relevant chunks
+- **Context Enrichment**: Retrieved chunks are summarized by Poe before being included in AI prompts
+- **Token Savings**: Estimated 40-60% reduction in tokens per AI conversation
+- **API Endpoints**:
+  - GET /api/projects/:projectId/rag/status - Check embedding status
+  - POST /api/projects/:projectId/rag/generate - Trigger embedding generation
+- **Environment Variables**: Requires OPENAI_API_KEY secret for embeddings
+
 ## Time Impact Analysis Architecture
 - **TIA Calculation Engine**: Advanced schedule impact calculator with fragnet insertion, delay modeling, and float consumption analysis
 - **Scenario Management**: Support for multiple TIA scenario types (delay analysis, acceleration, what-if, recovery planning)
