@@ -2610,6 +2610,69 @@ Return ONLY the enhanced prompt text, nothing else.`;
   // Register schedule-related routes (includes export functionality)
   registerScheduleRoutes(app);
 
+  // Trade Templates API - Adaptive Learning
+  app.get("/api/trade-templates", isAuthenticated, async (req, res) => {
+    try {
+      const templates = await storage.getTradeTemplates();
+      res.json(templates);
+    } catch (error) {
+      console.error("Error fetching trade templates:", error);
+      res.status(500).json({ error: "Failed to fetch trade templates" });
+    }
+  });
+
+  app.get("/api/trade-templates/:id", isAuthenticated, async (req, res) => {
+    try {
+      const template = await storage.getTradeTemplate(req.params.id);
+      if (!template) {
+        return res.status(404).json({ error: "Trade template not found" });
+      }
+      res.json(template);
+    } catch (error) {
+      console.error("Error fetching trade template:", error);
+      res.status(500).json({ error: "Failed to fetch trade template" });
+    }
+  });
+
+  app.get("/api/trade-templates/category/:category", isAuthenticated, async (req, res) => {
+    try {
+      const templates = await storage.getTradeTemplatesByCategory(req.params.category);
+      res.json(templates);
+    } catch (error) {
+      console.error("Error fetching trade templates by category:", error);
+      res.status(500).json({ error: "Failed to fetch trade templates" });
+    }
+  });
+
+  // User Learned Rules API
+  app.get("/api/users/:userId/learned-rules", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (userId !== req.params.userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const rules = await storage.getUserLearnedRules(userId);
+      res.json(rules);
+    } catch (error) {
+      console.error("Error fetching learned rules:", error);
+      res.status(500).json({ error: "Failed to fetch learned rules" });
+    }
+  });
+
+  app.post("/api/users/:userId/learned-rules", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user?.claims?.sub;
+      if (userId !== req.params.userId) {
+        return res.status(403).json({ error: "Access denied" });
+      }
+      const rule = await storage.createUserLearnedRule({ ...req.body, userId });
+      res.json(rule);
+    } catch (error) {
+      console.error("Error creating learned rule:", error);
+      res.status(500).json({ error: "Failed to create learned rule" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

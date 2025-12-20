@@ -14,7 +14,8 @@ import type {
   ActivityComment, InsertActivityComment, Attachment, InsertAttachment,
   AuditLog, InsertAuditLog, ProjectMember, InsertProjectMember,
   ScheduleVersion, InsertScheduleVersion,
-  User, UpsertUser
+  User, UpsertUser,
+  TradeTemplate, InsertTradeTemplate, UserLearnedRule, InsertUserLearnedRule
 } from "@shared/schema";
 
 export interface IStorage {
@@ -185,6 +186,17 @@ export interface IStorage {
   // AI Messages
   getMessagesByConversation(conversationId: string): Promise<AiMessage[]>;
   createMessage(message: InsertAiMessage): Promise<AiMessage>;
+  
+  // Trade Templates (Adaptive Learning)
+  getTradeTemplates(): Promise<TradeTemplate[]>;
+  getTradeTemplate(id: string): Promise<TradeTemplate | undefined>;
+  getTradeTemplatesByCategory(category: string): Promise<TradeTemplate[]>;
+  createTradeTemplate(template: InsertTradeTemplate): Promise<TradeTemplate>;
+  
+  // User Learned Rules
+  getUserLearnedRules(userId: string): Promise<UserLearnedRule[]>;
+  createUserLearnedRule(rule: InsertUserLearnedRule): Promise<UserLearnedRule>;
+  updateUserLearnedRule(id: string, updates: Partial<UserLearnedRule>): Promise<UserLearnedRule | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -216,6 +228,8 @@ export class MemStorage implements IStorage {
   private projectMembers = new Map<string, ProjectMember>();
   private scheduleVersions = new Map<string, ScheduleVersion>();
   private users = new Map<string, User>();
+  private tradeTemplates = new Map<string, TradeTemplate>();
+  private userLearnedRules = new Map<string, UserLearnedRule>();
 
   constructor() {
     this.seedData();
@@ -1852,6 +1866,72 @@ export class MemStorage implements IStorage {
     });
     
     return newMessage;
+  }
+
+  // Trade Templates (Adaptive Learning)
+  async getTradeTemplates(): Promise<TradeTemplate[]> {
+    return Array.from(this.tradeTemplates.values())
+      .filter(t => t.isActive)
+      .sort((a, b) => a.tradeCategory.localeCompare(b.tradeCategory));
+  }
+
+  async getTradeTemplate(id: string): Promise<TradeTemplate | undefined> {
+    return this.tradeTemplates.get(id);
+  }
+
+  async getTradeTemplatesByCategory(category: string): Promise<TradeTemplate[]> {
+    return Array.from(this.tradeTemplates.values())
+      .filter(t => t.isActive && t.tradeCategory.toLowerCase().includes(category.toLowerCase()));
+  }
+
+  async createTradeTemplate(template: InsertTradeTemplate): Promise<TradeTemplate> {
+    const id = randomUUID();
+    const newTemplate: TradeTemplate = {
+      ...template,
+      id,
+      description: template.description ?? null,
+      isActive: template.isActive ?? true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.tradeTemplates.set(id, newTemplate);
+    return newTemplate;
+  }
+
+  // User Learned Rules
+  async getUserLearnedRules(userId: string): Promise<UserLearnedRule[]> {
+    return Array.from(this.userLearnedRules.values())
+      .filter(r => r.userId === userId && r.isActive)
+      .sort((a, b) => (b.confidenceScore ?? 0) - (a.confidenceScore ?? 0));
+  }
+
+  async createUserLearnedRule(rule: InsertUserLearnedRule): Promise<UserLearnedRule> {
+    const id = randomUUID();
+    const newRule: UserLearnedRule = {
+      ...rule,
+      id,
+      confidenceScore: rule.confidenceScore ?? 50,
+      occurrenceCount: rule.occurrenceCount ?? 1,
+      lastApplied: rule.lastApplied ?? null,
+      isActive: rule.isActive ?? true,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+    this.userLearnedRules.set(id, newRule);
+    return newRule;
+  }
+
+  async updateUserLearnedRule(id: string, updates: Partial<UserLearnedRule>): Promise<UserLearnedRule | undefined> {
+    const rule = this.userLearnedRules.get(id);
+    if (!rule) return undefined;
+    
+    const updated: UserLearnedRule = {
+      ...rule,
+      ...updates,
+      updatedAt: new Date()
+    };
+    this.userLearnedRules.set(id, updated);
+    return updated;
   }
 }
 

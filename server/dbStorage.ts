@@ -14,14 +14,15 @@ import type {
   ActivityComment, InsertActivityComment, Attachment, InsertAttachment,
   AuditLog, InsertAuditLog, ProjectMember, InsertProjectMember,
   ScheduleVersion, InsertScheduleVersion,
-  User, UpsertUser
+  User, UpsertUser,
+  TradeTemplate, InsertTradeTemplate, UserLearnedRule, InsertUserLearnedRule
 } from "@shared/schema";
 import {
   users, projects, wbs, activities, relationships, calendars,
   resources, resourceAssignments, baselines, baselineActivities, tiaScenarios, tiaFragnets,
   tiaDelays, tiaResults, scheduleUpdates, importExportHistory,
   aiContext, aiConversations, aiMessages, activityCodes, activityComments, attachments,
-  auditLogs, projectMembers, scheduleVersions
+  auditLogs, projectMembers, scheduleVersions, tradeTemplates, userLearnedRules
 } from "@shared/schema";
 
 export class DbStorage implements IStorage {
@@ -1411,6 +1412,100 @@ export class DbStorage implements IStorage {
     } catch (error) {
       console.error("Error creating message:", error);
       throw error;
+    }
+  }
+
+  // Trade Templates (Adaptive Learning)
+  async getTradeTemplates(): Promise<TradeTemplate[]> {
+    try {
+      return await db
+        .select()
+        .from(tradeTemplates)
+        .where(eq(tradeTemplates.isActive, true))
+        .orderBy(tradeTemplates.tradeCategory);
+    } catch (error) {
+      console.error("Error getting trade templates:", error);
+      return [];
+    }
+  }
+
+  async getTradeTemplate(id: string): Promise<TradeTemplate | undefined> {
+    try {
+      const result = await db
+        .select()
+        .from(tradeTemplates)
+        .where(eq(tradeTemplates.id, id))
+        .limit(1);
+      return result[0];
+    } catch (error) {
+      console.error("Error getting trade template:", error);
+      return undefined;
+    }
+  }
+
+  async getTradeTemplatesByCategory(category: string): Promise<TradeTemplate[]> {
+    try {
+      return await db
+        .select()
+        .from(tradeTemplates)
+        .where(and(
+          eq(tradeTemplates.isActive, true),
+          sql`LOWER(${tradeTemplates.tradeCategory}) LIKE ${'%' + category.toLowerCase() + '%'}`
+        ));
+    } catch (error) {
+      console.error("Error getting trade templates by category:", error);
+      return [];
+    }
+  }
+
+  async createTradeTemplate(insertTemplate: InsertTradeTemplate): Promise<TradeTemplate> {
+    try {
+      const result = await db.insert(tradeTemplates).values(insertTemplate).returning();
+      return result[0];
+    } catch (error) {
+      console.error("Error creating trade template:", error);
+      throw error;
+    }
+  }
+
+  // User Learned Rules
+  async getUserLearnedRules(userId: string): Promise<UserLearnedRule[]> {
+    try {
+      return await db
+        .select()
+        .from(userLearnedRules)
+        .where(and(
+          eq(userLearnedRules.userId, userId),
+          eq(userLearnedRules.isActive, true)
+        ))
+        .orderBy(sql`${userLearnedRules.confidenceScore} DESC`);
+    } catch (error) {
+      console.error("Error getting user learned rules:", error);
+      return [];
+    }
+  }
+
+  async createUserLearnedRule(insertRule: InsertUserLearnedRule): Promise<UserLearnedRule> {
+    try {
+      const result = await db.insert(userLearnedRules).values(insertRule).returning();
+      return result[0];
+    } catch (error) {
+      console.error("Error creating user learned rule:", error);
+      throw error;
+    }
+  }
+
+  async updateUserLearnedRule(id: string, updates: Partial<UserLearnedRule>): Promise<UserLearnedRule | undefined> {
+    try {
+      const result = await db
+        .update(userLearnedRules)
+        .set({ ...updates, updatedAt: new Date() })
+        .where(eq(userLearnedRules.id, id))
+        .returning();
+      return result[0];
+    } catch (error) {
+      console.error("Error updating user learned rule:", error);
+      return undefined;
     }
   }
 }

@@ -21,6 +21,8 @@ export const users = pgTable("users", {
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
+  primaryTrade: varchar("primary_trade"), // e.g., "General Contractor", "MEP Subcontractor", "Abatement"
+  specialties: jsonb("specialties").$type<string[]>(), // Array of specialty areas
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -601,6 +603,58 @@ export type ScheduleVersion = typeof scheduleVersions.$inferSelect;
 export type InsertScheduleVersion = z.infer<typeof insertScheduleVersionSchema>;
 export type ScheduleEmbedding = typeof scheduleEmbeddings.$inferSelect;
 export type InsertScheduleEmbedding = z.infer<typeof insertScheduleEmbeddingSchema>;
+
+// Adaptive Learning - Trade Templates
+export const ruleTypeEnum = pgEnum("rule_type", ["must_precede", "must_follow", "cannot_overlap", "requires_gap", "concurrent_allowed"]);
+
+export const tradeTemplates = pgTable("trade_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  tradeCategory: varchar("trade_category").notNull(), // e.g., "Abatement", "General Construction", "MEP"
+  templateName: varchar("template_name").notNull(),
+  defaultActivities: jsonb("default_activities").$type<{
+    sequence: number;
+    name: string;
+    duration?: number;
+    durationType?: string;
+    isConditional?: boolean;
+    condition?: string;
+  }[]>().notNull(),
+  logicRules: jsonb("logic_rules").$type<{
+    predecessorKeyword: string;
+    successorKeyword: string;
+    relationshipType: "FS" | "SS" | "FF" | "SF";
+    lag?: number;
+    description?: string;
+    isConditional?: boolean;
+    condition?: string;
+  }[]>().notNull(),
+  description: text("description"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull()
+});
+
+export const userLearnedRules = pgTable("user_learned_rules", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").references(() => users.id).notNull(),
+  triggerKeyword: varchar("trigger_keyword").notNull(),
+  ruleType: ruleTypeEnum("rule_type").notNull(),
+  targetKeyword: varchar("target_keyword").notNull(),
+  confidenceScore: integer("confidence_score").default(50), // 0-100 scale
+  occurrenceCount: integer("occurrence_count").default(1),
+  lastApplied: timestamp("last_applied"),
+  isActive: boolean("is_active").default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull()
+});
+
+export const insertTradeTemplateSchema = createInsertSchema(tradeTemplates).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertUserLearnedRuleSchema = createInsertSchema(userLearnedRules).omit({ id: true, createdAt: true, updatedAt: true });
+
+export type TradeTemplate = typeof tradeTemplates.$inferSelect;
+export type InsertTradeTemplate = z.infer<typeof insertTradeTemplateSchema>;
+export type UserLearnedRule = typeof userLearnedRules.$inferSelect;
+export type InsertUserLearnedRule = z.infer<typeof insertUserLearnedRuleSchema>;
 
 // Export-specific types for schedule export functionality
 export interface ProjectSchedule {
