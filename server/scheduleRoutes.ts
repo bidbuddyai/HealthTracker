@@ -14,6 +14,7 @@ import { parseScheduleFile } from "./scheduleParser";
 import { embeddingService } from "./embeddingService";
 import { analyzeImportedSchedule } from "./patternObserver";
 import { SanitationMiddleware, type QualityReport } from "./scheduleSanitizer";
+import { analyzeImportGaps, type GapSuggestion } from "./gapDetector";
 
 // Background function to generate embeddings for a project
 async function generateEmbeddingsForProject(projectId: string): Promise<void> {
@@ -356,6 +357,39 @@ export function registerScheduleRoutes(app: Express) {
         if (qualityReport.loops > 0) message += `, ${qualityReport.loops} loops fixed`;
       }
       
+      // Run Gap Analysis to detect missing activities based on user's trade
+      let gapAnalysis: { suggestions: GapSuggestion[]; hasCriticalGaps: boolean; summary: string } | null = null;
+      if (userId) {
+        try {
+          const user = await storage.getUser(userId);
+          const userTrade = user?.primaryTrade;
+          
+          if (userTrade) {
+            gapAnalysis = analyzeImportGaps(
+              sanitizedActivities.map(act => ({
+                activityId: act.activityId,
+                activityName: act.activityName,
+                wbs: act.wbs
+              })),
+              userTrade
+            );
+            
+            if (gapAnalysis.suggestions.length > 0) {
+              console.log(`[Import] Gap analysis found ${gapAnalysis.suggestions.length} suggestions for trade "${userTrade}"`);
+            }
+          } else {
+            // User has no trade set - provide informative response
+            gapAnalysis = {
+              suggestions: [],
+              hasCriticalGaps: false,
+              summary: 'Gap analysis is available after you complete onboarding and select your trade. Visit Settings to set your primary trade for personalized suggestions.'
+            };
+          }
+        } catch (gapError) {
+          console.error("[Import] Gap analysis failed:", gapError);
+        }
+      }
+      
       res.json({
         success: true,
         message,
@@ -371,7 +405,12 @@ export function registerScheduleRoutes(app: Express) {
           calendarsFixed: qualityReport.calendarsFixed,
           warnings: qualityReport.warnings,
           inactivatedLinks: qualityReport.inactivatedLinks
-        }
+        },
+        gapAnalysis: gapAnalysis ? {
+          suggestions: gapAnalysis.suggestions,
+          hasCriticalGaps: gapAnalysis.hasCriticalGaps,
+          summary: gapAnalysis.summary
+        } : null
       });
     } catch (error) {
       console.error("Error importing schedule:", error);
